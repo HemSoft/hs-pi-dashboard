@@ -70,6 +70,9 @@
   .ucard.collapsed {
     flex-direction: row; align-items: baseline; flex-wrap: wrap;
     gap: 4px 10px; padding: 5px 12px; border-left-width: 2px;
+    /* Grid stretch would pin this card to the row's tallest sibling with
+       dead space beneath the chip; size to content instead. */
+    align-self: start;
   }
   .ucard.collapsed .ucard-label { font-size: 12.5px; }
   .ucard.collapsed .ucard-compact { display: contents; }
@@ -83,43 +86,41 @@
   }
   .ucard-compact .mini .gproj { font-size: 10.5px; }
 
-  .machine { margin-bottom: 28px; }
-  .machine-head {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    margin-bottom: 10px; font-size: 14px;
+  .session-table-wrap { overflow-x: auto; border: 1px solid var(--card-border); border-radius: 4px; background: var(--card); }
+  .session-table {
+    width: 100%; border-collapse: collapse; font-size: 11px;
   }
-  .machine-head h2 { color: var(--gold); font-size: 15px; font-weight: 600; letter-spacing: 1px; }
-  .state { font-size: 11px; padding: 2px 8px; border: 1px solid; border-radius: 3px; }
-  .state.online { color: var(--gold); border-color: var(--gold-dim); }
-  .state.offline { color: var(--muted); border-color: var(--card-border); }
-  .count { color: var(--muted); font-size: 12px; }
-  .count b { color: var(--gold); font-weight: 500; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
-  .card {
-    background: var(--card); border: 1px solid var(--card-border); border-left: 3px solid var(--card-border);
-    border-radius: 4px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+  .session-table th {
+    position: sticky; top: 0; background: var(--card);
+    color: var(--muted); font: 600 10px ui-monospace, monospace; text-transform: uppercase;
+    letter-spacing: .05em; text-align: left; padding: 6px 10px;
+    border-bottom: 1px solid var(--card-border);
+    white-space: nowrap;
   }
-  .card.active { border-left-color: var(--gold); }
-  .card.offline-machine { opacity: .45; }
-  .card-top { display: flex; align-items: center; gap: 8px; }
+  .session-table td {
+    padding: 6px 10px; border-bottom: 1px solid var(--card-border);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .session-table tr.machine-head td {
+    background: #080808; color: var(--gold);
+    font-size: 11px; letter-spacing: 1px;
+  }
+  .session-table tr.machine-head .state { font-size: 10px; padding: 1px 6px; border: 1px solid; border-radius: 3px; }
+  .session-table tr.machine-head .state.online { color: var(--gold); border-color: var(--gold-dim); }
+  .session-table tr.machine-head .state.offline { color: var(--muted); border-color: var(--card-border); }
+  .session-table tr.empty-row td { color: var(--muted); font-style: italic; border-bottom: 0; }
+  .session-table tr.active td { background: rgba(255, 215, 0, .07); }
+  .session-table tr.offline td { opacity: .45; }
+  .session-table tr.flash td { animation: row-flash 1.2s ease-out; }
+  @keyframes row-flash {
+    from { background-color: rgba(255, 215, 0, .22); box-shadow: inset 3px 0 0 0 var(--gold), inset 0 0 14px rgba(255, 215, 0, .25); }
+    to { background-color: transparent; box-shadow: none; }
+  }
+  .session-table tr:last-child td { border-bottom: 0; }
+  .session-table .title { color: var(--gold); font-weight: 600; max-width: 380px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
-  .project { color: var(--gold); font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .prompt {
-    color: var(--text); font-size: 12px; line-height: 1.5; opacity: .85;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    min-height: 2.6em;
-  }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip {
-    font-size: 10.5px; color: var(--gold-dim); border: 1px solid var(--card-border);
-    border-radius: 3px; padding: 2px 7px; background: #080808; white-space: nowrap;
-  }
-  .chip.model { color: var(--text); border-color: #3a3520; }
-  .chip.cost { color: var(--gold); border-color: var(--gold-dim); }
-  .foot { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
-  .empty { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
+  .empty-line { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
   footer { margin-top: 12px; color: var(--muted); font-size: 11px; }
   footer a { color: var(--gold-dim); text-decoration: none; }
 </style>
@@ -432,53 +433,111 @@ function initUsageToggle() {
   });
 }
 
-function machineSection(m) {
-  const sessions = m.sessions ?? [];
-  const activeCount = sessions.filter((s) => s.active && m.online).length;
-  const cards = sessions.length
-    ? `<div class="grid">${sessions.map((s) => sessionCard(s, m.online)).join("")}</div>`
-    : `<p class="empty">${m.online ? "no pi sessions yet" : "agent unreachable"}</p>`;
-  const err = m.error ? ` — ${esc(m.error)}` : "";
+// Row signature tracks meaningful session state. A signature change means
+// the 5s poll just delivered something new; those rows flash on render.
+const sessionSig = (s) => {
+  const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
+  return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
+    s.messageCount || 0, s.inputTokens || 0, s.outputTokens || 0,
+    +(s.costUsd || 0).toFixed(4), !!s.active].join("|");
+};
+let lastSigs = {};
+
+function sessionsTable(machines, hermesSessions) {
+  const newSigs = {};
+  const flat = [];
+  (machines ?? []).forEach((m) => {
+    (m.sessions ?? []).forEach((s) => {
+      newSigs[m.name + "/" + (s.id || "")] = sessionSig(s);
+      flat.push({ s, m, kind: "pi" });
+    });
+  });
+  (hermesSessions ?? []).forEach((s) => {
+    const entry = {
+      id: s.id,
+      cwd: s.cwd || "~/.hermes",
+      project: s.source + ":" + (s.id || "").slice(0, 8),
+      provider: "hermes:cli",
+      model: s.model || "",
+      thinkingLevel: "",
+      messageCount: s.messageCount || 0,
+      inputTokens: s.inputTokens || 0,
+      outputTokens: s.outputTokens || 0,
+      costUsd: s.estimatedCostUsd || 0,
+      startedAt: s.startedAt,
+      lastActivity: s.endedAt || s.startedAt,
+      active: !s.endedAt,
+    };
+    newSigs["hermes/" + (s.id || "")] = sessionSig(entry);
+    flat.push({ s: entry, m: { name: "mini (hermes)", online: true }, kind: "hermes" });
+  });
+  // Recency first: active sessions bubble ahead of idle.
+  flat.sort((a, b) => {
+    const aActive = a.kind === "hermes" ? a.s.active : (a.s.active && a.m.online);
+    const bActive = b.kind === "hermes" ? b.s.active : (b.s.active && b.m.online);
+    if (aActive !== bActive) return bActive - aActive;
+    return new Date(b.s.lastActivity || 0) - new Date(a.s.lastActivity || 0);
+  });
+  const rows = flat.map((entry) => {
+    const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
+    const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
+    return sessionRow(entry.s, entry.m, flash, entry.kind);
+  });
+  lastSigs = newSigs;
+  const nothing = !flat.length;
+  // When a machine has no pi sessions to show but Hermes is present on the
+  // host, its rows arrive via the Hermes feed; keep the whole machine visible
+  // rather than silently hiding it.
+  const body = nothing ? `<tr class="empty-row"><td colspan="9">no machines configured</td></tr>` : rows.join("");
   return `
-  <section class="machine">
-    <div class="machine-head">
-      <h2>${esc(m.name)}</h2>
-      <span class="state ${m.online ? "online" : "offline"}">${m.online ? "online" : "offline"}</span>
-      <span class="count"><b>${activeCount}</b> running · <b>${sessions.length}</b> sessions${err}</span>
-    </div>
-    ${cards}
-  </section>`;
+  <div class="session-table-wrap">
+    <table class="session-table">
+      <thead>
+        <tr>
+          <th>computer</th><th>session title</th><th>provider</th><th>model</th><th>effort</th><th>msgs</th><th>↑ in ↓ out</th><th>price</th><th>runtime</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
 }
 
-function sessionCard(s, machineOnline) {
-  const live = s.active && machineOnline;
-  const chips = [];
-  if (s.model) chips.push(`<span class="chip model">${esc(s.model)}</span>`);
-  if (s.thinkingLevel) chips.push(`<span class="chip">${esc(s.thinkingLevel)}</span>`);
-  if (s.messageCount) chips.push(`<span class="chip">${s.messageCount} msgs</span>`);
-  if (s.inputTokens || s.outputTokens) chips.push(`<span class="chip">${tokens(s)}</span>`);
-  if (s.costUsd >= 0.00005) chips.push(`<span class="chip cost">$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}</span>`);
-  const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
+function sessionRow(s, m, flash, kind) {
+  const live = kind === "pi" ? (s.active && m.online) : s.active;
+  const session = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
+  const provider = s.provider || "";
+  const model = s.model || "";
+  const effort = s.thinkingLevel || "";
+  const msgs = s.messageCount ? String(s.messageCount) : "";
+  const tok = s.inputTokens || s.outputTokens ? tokens(s) : "";
+  const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
+  const runtime = s.startedAt && (kind === "pi" || s.active || s.startedAt) ? rel(s.startedAt) : "";
+  const cls = (live ? "active" : "offline") + (flash ? " flash" : "");
   return `
-  <div class="card ${live ? "active" : ""} ${machineOnline ? "" : "offline-machine"}">
-    <div class="card-top">
-      <span class="${live ? "live" : "idle-dot"}" title="${live ? "active" : "idle"}"></span>
-      <span class="project" title="${esc(s.cwd || "")}">${esc(project)}</span>
-    </div>
-    <div class="prompt">${esc(s.firstPrompt || "(no prompt captured)")}</div>
-    <div class="meta">${chips.join("")}</div>
-    <div class="foot"><span>${live ? "running" : "idle"}</span><span title="${esc(s.startedAt || "")}">started ${rel(s.startedAt)}</span></div>
-  </div>`;
+  <tr class="${cls}">
+    <td>${esc(m.name)}</td>
+    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${esc(session)}</td>
+    <td>${esc(provider)}</td>
+    <td>${esc(model)}</td>
+    <td>${esc(effort)}</td>
+    <td>${msgs}</td>
+    <td>${esc(tok)}</td>
+    <td>${price}</td>
+    <td title="${esc(s.startedAt || "")}">${runtime}</td>
+  </tr>`;
 }
 
 async function tick() {
   try {
-    const res = await fetch("/api/fleet");
-    const fleet = await res.json();
+    const [fleetRes, hermesRes] = await Promise.all([
+      fetch("/api/fleet"),
+      fetch("/api/hermes-sessions").catch(() => null),
+    ]);
+    const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
-    document.getElementById("app").innerHTML =
-      fleet.machines.map(machineSection).join("") || '<p class="empty">no machines configured</p>';
+    const hermes = hermesRes && hermesRes.ok ? (await hermesRes.json()).sessions || [] : [];
+    document.getElementById("app").innerHTML = sessionsTable(fleet.machines, hermes);
     lastFleet = fleet;
     renderUsage(fleet);
   } catch (err) {
