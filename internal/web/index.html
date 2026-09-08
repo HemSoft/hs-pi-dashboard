@@ -185,19 +185,6 @@ function resetCountdown(resetAt) {
   return "resets in " + compactDur(ms);
 }
 
-// Started wall-clock time pinned to the fleet's home timezone (Eastern, so
-// EST/EDT follows the calendar). A bare "22:14" is ambiguous for sessions
-// started days ago, so off-day starts get a date prefix.
-const HOME_TZ = "America/New_York";
-function startedTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  const tzDate = { timeZone: HOME_TZ };
-  const time = d.toLocaleTimeString("en-US", { ...tzDate, hour: "2-digit", minute: "2-digit", hour12: false });
-  if (d.toLocaleDateString("en-US", tzDate) === new Date().toLocaleDateString("en-US", tzDate)) return time;
-  return d.toLocaleDateString("en-US", { ...tzDate, month: "short", day: "numeric" }) + " " + time;
-}
-
 // Session span. Active sessions are still growing, so measure to now (this
 // recomputes on every 5s render); ended/idle ones measure to their last
 // write — Hermes folds endedAt into lastActivity upstream.
@@ -542,7 +529,9 @@ function sessionRow(s, m, flash, kind) {
   const model = s.model || "";
   const effort = s.thinkingLevel || "";
   const msgs = s.messageCount ? String(s.messageCount) : "";
-  const started = startedTime(s.startedAt);
+  // Started shown as a compact age (same format as duration); the exact
+  // timestamp stays in the cell tooltip.
+  const started = s.startedAt ? compactDur(Date.now() - new Date(s.startedAt).getTime()) : "";
   const dur = durationOf(s);
   const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
   const cls = (live ? "active" : "offline") + (flash ? " flash" : "");
