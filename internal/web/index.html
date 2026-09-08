@@ -487,15 +487,19 @@ const expandedOutputs = new Set();
 // the user expanded; stale keys fall back out of the expanded set.
 const FRESH_OUTPUT_MS = 10 * 60e3;
 
-function outputSubrows(s, flash, key) {
+function freshOutputs(s, key) {
   const outs = s.outputs || [];
-  if (!outs.length) return "";
+  if (!outs.length) return null;
   const age0 = Date.now() - new Date(outs[0].at).getTime();
   if (!Number.isFinite(age0) || age0 < 0 || age0 > FRESH_OUTPUT_MS) {
     expandedOutputs.delete(key);
-    return "";
+    return null;
   }
-  if (!expandedOutputs.has(key)) return "";
+  return outs;
+}
+
+// Pure renderer for one session's output rows (newest first).
+function renderOutputRows(outs, flash) {
   return outs.map((o, i) => {
     const age = Date.now() - new Date(o.at).getTime();
     if (!Number.isFinite(age) || age < 0) return "";
@@ -549,8 +553,10 @@ function sessionsTable(machines, hermesSessions) {
   const rows = flat.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
-    const subs = outputSubrows(entry.s, flash, key);
-    return sessionRow(entry.s, entry.m, flash, entry.kind, !!subs, key, expandedOutputs.has(key)) + subs;
+    const outs = freshOutputs(entry.s, key);
+    const expandedNow = !!(outs && expandedOutputs.has(key));
+    const subs = expandedNow ? renderOutputRows(outs, flash) : "";
+    return sessionRow(entry.s, entry.m, flash, entry.kind, !!outs, expandedNow, key) + subs;
   });
   lastSigs = newSigs;
   const nothing = !flat.length;
@@ -571,7 +577,7 @@ function sessionsTable(machines, hermesSessions) {
   </div>`;
 }
 
-function sessionRow(s, m, flash, kind, hasSub, key, expanded) {
+function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   const live = kind === "pi" ? (s.active && m.online) : s.active;
   const session = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   const provider = s.provider || "";
@@ -583,12 +589,15 @@ function sessionRow(s, m, flash, kind, hasSub, key, expanded) {
   const started = s.startedAt ? compactDur(Date.now() - new Date(s.startedAt).getTime()) : "";
   const dur = durationOf(s);
   const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
-  const cls = (live ? "active" : "offline") + (flash ? " flash" : "") + (hasSub ? " has-sub toggleable" : "");
-  const attrs = hasSub ? ` class="${cls}" data-skey="${esc(key)}"` : ` class="${cls}"`;
+  // avail = fresh output exists (chevron + clickable); expandedNow = the
+  // detail rows are actually rendered right now (border drops, chevron opens).
+  const cls = (live ? "active" : "offline") + (flash ? " flash" : "")
+    + (expandedNow ? " has-sub" : "") + (avail ? " toggleable" : "");
+  const attrs = avail ? ` class="${cls}" data-skey="${esc(key)}"` : ` class="${cls}"`;
   return `
   <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${hasSub ? `<span class="out-chev">${expanded ? "▾" : "▸"}</span>` : ""}${esc(session)}</td>
+    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}</td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
