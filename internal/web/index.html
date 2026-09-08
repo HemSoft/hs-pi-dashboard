@@ -204,11 +204,11 @@ function gaugeSvg(g) {
   const endDeg = 180 + sweep;
   const [capX, capY] = polar(cx, cy, r - 2, endDeg);
 
-  // Ghost projection: a thin sparse dashed guide line along the center of
-  // the track, from current usage to where the current pace would land at
-  // reset (capped at the dial edge; the exact number lives in the proj
-  // chip). Deliberately quieter than the solid arc so a 137% projection
-  // doesn't wallpaper the whole dial.
+  // Ghost projection: a solid opaque arc from current usage to where the
+  // current pace would land at reset (capped at the dial edge; the exact
+  // number lives in the proj chip). A small notch separates measured from
+  // projected, and the segment is colored as the projected state — scale
+  // color at the projected value, alarm red when it overshoots 100%.
   let ghost = "";
   if (g.projectedEnd != null) {
     const proj = Math.max(0, Math.min(100, g.projectedEnd));
@@ -216,9 +216,11 @@ function gaugeSvg(g) {
     if (projDeg - endDeg > 1) {
       const [px, py] = polar(cx, cy, r, projDeg);
       const over = g.projectedEnd > 100;
+      const projColor = over ? "#ff6b6b" : usageColor(proj);
+      const gapDeg = 2.5;
       ghost =
-        `<path d="${arcPath(cx, cy, r, endDeg, projDeg)}" stroke="${over ? "#ff6b6b" : color}" stroke-width="4" fill="none" stroke-linecap="butt" stroke-dasharray="2 9" opacity=".4"/>` +
-        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="5.5" fill="none" stroke="${over ? "#ff6b6b" : color}" stroke-width="1.5" opacity=".55"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
+        `<path d="${arcPath(cx, cy, r, Math.min(endDeg + gapDeg, projDeg), projDeg)}" stroke="${projColor}" stroke-width="11" fill="none" stroke-linecap="butt" opacity="1"/>` +
+        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${projColor}" stroke="#050505" stroke-width="1.5"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
     }
   }
 
