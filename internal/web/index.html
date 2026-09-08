@@ -66,15 +66,20 @@
   .usage-stale { color: var(--muted); font-size: 10px; }
   .ucard.collapsible { cursor: pointer; user-select: none; }
   .ucard.collapsible:hover { border-color: #3f3f3f; }
-  .ucard .chev { margin-left: auto; color: var(--muted); font-size: 10px; transition: transform .15s; }
-  .ucard.collapsed .chev { transform: rotate(-90deg); }
-  .ucard.collapsed { gap: 6px; padding: 10px 14px; }
-  .ucard.collapsed .gauges, .ucard.collapsed .balance { display: none; }
+  .ucard .chev { color: var(--muted); font-size: 10px; transition: transform .15s; }
+  .ucard.collapsed {
+    flex-direction: row; align-items: baseline; flex-wrap: wrap;
+    gap: 4px 10px; padding: 5px 12px; border-left-width: 2px;
+  }
+  .ucard.collapsed .ucard-label { font-size: 12.5px; }
+  .ucard.collapsed .ucard-compact { display: contents; }
+  .ucard.collapsed .chev { margin-left: auto; transform: rotate(-90deg); }
+  .ucard.collapsed .usage-stale { font-size: 9.5px; }
   .ucard-compact { display: flex; flex-wrap: wrap; gap: 6px; }
   .ucard-compact .mini {
     display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap;
     font-size: 11.5px; color: var(--text);
-    background: #080808; border: 1px solid var(--card-border); border-radius: 3px; padding: 2px 7px;
+    background: #080808; border: 1px solid var(--card-border); border-radius: 3px; padding: 1px 7px;
   }
   .ucard-compact .mini .gproj { font-size: 10.5px; }
 
@@ -325,9 +330,22 @@ function usageCard(card, machine) {
     ? ` role="button" tabindex="0" data-machine="${esc(machine)}" data-key="${esc(card.key)}" `
       + `onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"`
     : "";
+
+  if (collapsed) {
+    return `
+  <div class="ucard collapsible collapsed"${attrs}>
+    <span class="ucard-label">${esc(card.label)}</span>
+    ${compactBody(card)}
+    <span class="usage-stale" title="${esc(card.fetchedAt || "")}">· ${rel(card.fetchedAt)}</span>
+    <span class="chev" title="expand">▾</span>
+  </div>`;
+  }
+
   return `
-  <div class="ucard ${collapsible ? "collapsible" : ""} ${collapsed ? "collapsed" : ""}"${attrs}>
-    <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}${chev}</div>
+  <div class="ucard"${attrs}>
+    <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}
+      ${chev}
+    </div>
     ${body}
   </div>`;
 }
