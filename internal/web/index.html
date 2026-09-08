@@ -33,6 +33,38 @@
   .refresh .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); margin-right: 6px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
+  .usage-toggle {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    background: none; border: none; cursor: pointer; padding: 10px 2px;
+    color: var(--gold); font-family: inherit; font-size: 14px; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase; text-align: left;
+    border-bottom: 1px solid var(--card-border); margin-bottom: 14px;
+  }
+  .usage-toggle .chev { display: inline-block; transition: transform .15s; color: var(--gold-dim); }
+  .usage-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+  .usage-toggle .hint { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
+  .usage-body.collapsed { display: none; }
+  .usage-machines { display: flex; flex-direction: column; gap: 18px; margin-bottom: 10px; }
+  .usage-machine-label { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .ucard {
+    background: var(--card); border: 1px solid var(--card-border); border-radius: 4px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .ucard-label { color: var(--gold); font-weight: 600; font-size: 13px; letter-spacing: .5px; }
+  .ucard-error { color: var(--muted); font-size: 11.5px; font-style: italic; }
+  .gauges { display: flex; flex-wrap: wrap; gap: 12px; }
+  .gauge { display: flex; flex-direction: column; align-items: center; width: 118px; gap: 2px; }
+  .gauge svg { width: 118px; height: 72px; }
+  .gauge .glabel { color: var(--text); font-size: 11px; }
+  .gauge .greset { color: var(--muted); font-size: 10px; }
+  .gauge .gproj { font-size: 10px; color: var(--gold-dim); }
+  .gauge .gproj.over { color: #ff6b6b; }
+  .balance { display: flex; align-items: baseline; gap: 10px; }
+  .balance .amount { color: var(--gold); font-size: 26px; font-weight: 600; }
+  .balance .unit { color: var(--muted); font-size: 11px; }
+  .usage-stale { color: var(--muted); font-size: 10px; }
+
   .machine { margin-bottom: 28px; }
   .machine-head {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -72,36 +104,6 @@
   .empty { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
   footer { margin-top: 12px; color: var(--muted); font-size: 11px; }
   footer a { color: var(--gold-dim); text-decoration: none; }
-
-  .usage-toggle {
-    width: 100%; display: flex; align-items: center; gap: 8px;
-    background: none; border: none; cursor: pointer; padding: 10px 2px;
-    color: var(--gold); font-family: inherit; font-size: 14px; font-weight: 600;
-    letter-spacing: 1px; text-transform: uppercase; text-align: left;
-    border-bottom: 1px solid var(--card-border); margin-bottom: 14px;
-  }
-  .usage-toggle .chev { display: inline-block; transition: transform .15s; color: var(--gold-dim); }
-  .usage-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
-  .usage-toggle .hint { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
-  .usage-body.collapsed { display: none; }
-  .usage-machines { display: flex; flex-direction: column; gap: 18px; margin-bottom: 10px; }
-  .usage-machine-label { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
-  .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-  .ucard {
-    background: var(--card); border: 1px solid var(--card-border); border-radius: 4px;
-    padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
-  }
-  .ucard-label { color: var(--gold); font-weight: 600; font-size: 13px; letter-spacing: .5px; }
-  .ucard-error { color: var(--muted); font-size: 11.5px; font-style: italic; }
-  .gauges { display: flex; flex-wrap: wrap; gap: 10px; }
-  .gauge { display: flex; flex-direction: column; align-items: center; width: 96px; gap: 2px; }
-  .gauge svg { width: 96px; height: 56px; }
-  .gauge .glabel { color: var(--text); font-size: 11px; }
-  .gauge .greset { color: var(--muted); font-size: 10px; }
-  .balance { display: flex; align-items: baseline; gap: 10px; }
-  .balance .amount { color: var(--gold); font-size: 26px; font-weight: 600; }
-  .balance .unit { color: var(--muted); font-size: 11px; }
-  .usage-stale { color: var(--muted); font-size: 10px; }
 </style>
 </head>
 <body>
@@ -133,59 +135,58 @@ function rel(ts) {
   return Math.round(d / 86400) + "d ago";
 }
 
+// Compact no-seconds duration, statusline style: "42m" / "5h 4m" / "6d 18h".
+function compactDur(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h " + (m % 60) + "m";
+  const d = Math.floor(h / 24);
+  return d + "d " + (h % 24) + "h";
+}
+
+// Live reset countdown: recomputed every render so cached agent data never
+// shows a stale "resets now".
+function resetCountdown(resetAt) {
+  if (!resetAt) return "";
+  const ms = new Date(resetAt).getTime() - Date.now();
+  if (ms <= 0) return "resetting…";
+  return "resets in " + compactDur(ms);
+}
+
 function tokens(s) {
   const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n ?? 0);
   return `▲${fmt(s.inputTokens)} ▼${fmt(s.outputTokens)}`;
 }
 
-function sessionCard(s, machineOnline) {
-  const live = s.active && machineOnline;
-  const chips = [];
-  if (s.model) chips.push(`<span class="chip model">${esc(s.model)}</span>`);
-  if (s.thinkingLevel) chips.push(`<span class="chip">${esc(s.thinkingLevel)}</span>`);
-  if (s.messageCount) chips.push(`<span class="chip">${s.messageCount} msgs</span>`);
-  if (s.inputTokens || s.outputTokens) chips.push(`<span class="chip">${tokens(s)}</span>`);
-  if (s.costUsd >= 0.00005) chips.push(`<span class="chip cost">$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}</span>`);
-  const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
-  return `
-  <div class="card ${live ? "active" : ""} ${machineOnline ? "" : "offline-machine"}">
-    <div class="card-top">
-      <span class="${live ? "live" : "idle-dot"}" title="${live ? "active" : "idle"}"></span>
-      <span class="project" title="${esc(s.cwd || "")}">${esc(project)}</span>
-    </div>
-    <div class="prompt">${esc(s.firstPrompt || "(no prompt captured)")}</div>
-    <div class="meta">${chips.join("")}</div>
-    <div class="foot"><span>${live ? "running" : "idle"}</span><span title="${esc(s.startedAt || "")}">started ${rel(s.startedAt)}</span></div>
-  </div>`;
-}
-
-function machineSection(m) {
-  const sessions = m.sessions ?? [];
-  const activeCount = sessions.filter((s) => s.active && m.online).length;
-  const cards = sessions.length
-    ? `<div class="grid">${sessions.map((s) => sessionCard(s, m.online)).join("")}</div>`
-    : `<p class="empty">${m.online ? "no pi sessions yet" : "agent unreachable"}</p>`;
-  const err = m.error ? ` — ${esc(m.error)}` : "";
-  return `
-  <section class="machine">
-    <div class="machine-head">
-      <h2>${esc(m.name)}</h2>
-      <span class="state ${m.online ? "online" : "offline"}">${m.online ? "online" : "offline"}</span>
-      <span class="count"><b>${activeCount}</b> running · <b>${sessions.length}</b> sessions${err}</span>
-    </div>
-    ${cards}
-  </section>`;
-}
-
 // --- usage speedometers -----------------------------------------------------
+// Gauges represent USAGE (0% = empty and bright green, 100% = full and dark
+// red) on the statusline's green→red scale, drawn on a 3D-bezel dial.
+
+const USAGE_SCALE = [
+  [50, "#00ff00"], // bright green
+  [65, "#00af00"], // green
+  [75, "#ff9500"], // orange
+  [85, "#ffff00"], // yellow
+  [92, "#ff2b2b"], // bright red
+  [97, "#d70000"], // red
+  [101, "#870000"], // dark red
+];
+function usageColor(pct) {
+  for (const [max, color] of USAGE_SCALE) if (pct < max) return color;
+  return USAGE_SCALE[USAGE_SCALE.length - 1][1];
+}
+
+let gaugeUID = 0;
 
 function polar(cx, cy, r, deg) {
   const a = ((deg - 180) * Math.PI) / 180;
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
 }
 
-// Arc swept clockwise from `startDeg` to `endDeg`; 180 is the left edge of
-// the semicircle, 360 the right.
+// Arc swept clockwise from `startDeg` (180 = left edge) to `endDeg`
+// (360 = right edge) over the top of the dial.
 function arcPath(cx, cy, r, startDeg, endDeg) {
   const [sx, sy] = polar(cx, cy, r, startDeg);
   const [ex, ey] = polar(cx, cy, r, endDeg);
@@ -193,20 +194,64 @@ function arcPath(cx, cy, r, startDeg, endDeg) {
   return `M ${sx.toFixed(2)} ${sy.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`;
 }
 
-function gaugeSvg(label, usedPercent, resetAt) {
-  const remaining = Math.max(0, Math.min(100, 100 - usedPercent));
-  const sweep = (remaining / 100) * 180;
-  const color = remaining >= 25 ? "var(--gold)" : "#ff6b6b";
-  const cx = 48, cy = 48, r = 40;
+function gaugeSvg(g) {
+  const used = Math.max(0, Math.min(100, g.usedPercent ?? 0));
+  const color = usageColor(used);
+  const id = "hg" + (++gaugeUID);
+  const cx = 60, cy = 56, r = 44;
+  const sweep = (used / 100) * 180;
+  const endDeg = 180 + sweep;
+  const [capX, capY] = polar(cx, cy, r - 2, endDeg);
+
+  const ticks = [];
+  for (let t = 0; t <= 100; t += 10) {
+    const deg = 180 + (t / 100) * 180;
+    const [x1, y1] = polar(cx, cy, r + 7.5, deg);
+    const [x2, y2] = polar(cx, cy, r + (t % 25 === 0 ? 12 : 10), deg);
+    ticks.push(`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${t % 25 === 0 ? "#5a5240" : "#2c2c2c"}" stroke-width="1"/>`);
+  }
+
+  const face = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy} L ${cx - r} ${cy} Z`;
+
   return `
   <div class="gauge">
-    <svg viewBox="0 0 96 56" aria-label="${esc(label)}: ${Math.round(remaining)}% left">
-      <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="#1c1c1c" stroke-width="9" fill="none" stroke-linecap="round"/>
-      ${sweep > 0.5 ? `<path d="${arcPath(cx, cy, r, 180, 180 + sweep)}" stroke="${color}" stroke-width="9" fill="none" stroke-linecap="round"/>` : ""}
-      <text x="${cx}" y="44" text-anchor="middle" fill="var(--text)" font-size="15" font-weight="600">${Math.round(remaining)}%</text>
+    <svg viewBox="0 0 120 76" role="img" aria-label="${esc(g.label)}: ${Math.round(used)}% used">
+      <defs>
+        <linearGradient id="${id}-bezel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#333333"/>
+          <stop offset=".55" stop-color="#161616"/>
+          <stop offset="1" stop-color="#050505"/>
+        </linearGradient>
+        <radialGradient id="${id}-face" cx=".5" cy=".85" r="1">
+          <stop offset="0" stop-color="#000000"/>
+          <stop offset=".8" stop-color="#0d0d0d"/>
+          <stop offset="1" stop-color="#181818"/>
+        </radialGradient>
+        <filter id="${id}-shadow" x="-20%" y="-20%" width="140%" height="160%">
+          <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000000" flood-opacity=".9"/>
+        </filter>
+      </defs>
+      <g filter="url(#${id}-shadow)">
+        <path d="${face}" fill="url(#${id}-face)" stroke="#2a2a2a" stroke-width="1"/>
+        <path d="${arcPath(cx, cy, r + 6, 180, 360)}" stroke="#3d3d3d" stroke-width="1.2" fill="none"/>
+        <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="url(#${id}-bezel)" stroke-width="11" fill="none" stroke-linecap="round"/>
+        <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="#000000" stroke-width="4" fill="none" stroke-linecap="round" opacity=".6"/>
+        ${ticks.join("")}
+        ${sweep > 0.4 ? `
+        <path d="${arcPath(cx, cy, r, 180, endDeg)}" stroke="${color}" stroke-width="11" fill="none" stroke-linecap="round"/>
+        <path d="${arcPath(cx, cy, r - 3.5, 180, Math.max(180.5, endDeg - 1))}" stroke="rgba(255,255,255,.4)" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <circle cx="${capX.toFixed(1)}" cy="${capY.toFixed(1)}" r="3.2" fill="#ffffff" opacity=".55"/>` : `
+        <circle cx="${cx - r}" cy="${cy}" r="4" fill="${color}"/>`}
+      </g>
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${color}" font-size="17" font-weight="700" font-family="inherit">${Math.round(used)}%</text>
+      <text x="${cx}" y="${cy + 10}" text-anchor="middle" fill="#8a8578" font-size="8.5">used</text>
     </svg>
-    <span class="glabel">${esc(label)}</span>
-    <span class="greset" title="${esc(resetAt || "")}">${resetAt ? "resets " + rel(resetAt) : ""}</span>
+    <span class="glabel">${esc(g.label)}</span>
+    <span class="greset">${resetCountdown(g.resetAt)}</span>
+    ${g.projectedEnd != null ? (() => {
+      const p = Math.round(g.projectedEnd);
+      return `<span class="gproj ${p > 100 ? "over" : ""}" title="projected end-of-window usage at the current pace">⇗ proj ${p}%</span>`;
+    })() : ""}
   </div>`;
 }
 
@@ -214,7 +259,7 @@ function usageCard(card) {
   let body = "";
   if (card.kind === "quota") {
     body = card.gauges?.length
-      ? `<div class="gauges">${card.gauges.map((g) => gaugeSvg(g.label, g.usedPercent, g.resetAt)).join("")}</div>`
+      ? `<div class="gauges">${card.gauges.map(gaugeSvg).join("")}</div>`
       : `<span class="ucard-error">${esc(card.error || "no data")}</span>`;
   } else if (card.kind === "balance") {
     body = card.balanceUsd != null
@@ -268,6 +313,45 @@ function initUsageToggle() {
     apply(open);
     localStorage.setItem(USAGE_TOGGLE_KEY, String(open));
   });
+}
+
+function machineSection(m) {
+  const sessions = m.sessions ?? [];
+  const activeCount = sessions.filter((s) => s.active && m.online).length;
+  const cards = sessions.length
+    ? `<div class="grid">${sessions.map((s) => sessionCard(s, m.online)).join("")}</div>`
+    : `<p class="empty">${m.online ? "no pi sessions yet" : "agent unreachable"}</p>`;
+  const err = m.error ? ` — ${esc(m.error)}` : "";
+  return `
+  <section class="machine">
+    <div class="machine-head">
+      <h2>${esc(m.name)}</h2>
+      <span class="state ${m.online ? "online" : "offline"}">${m.online ? "online" : "offline"}</span>
+      <span class="count"><b>${activeCount}</b> running · <b>${sessions.length}</b> sessions${err}</span>
+    </div>
+    ${cards}
+  </section>`;
+}
+
+function sessionCard(s, machineOnline) {
+  const live = s.active && machineOnline;
+  const chips = [];
+  if (s.model) chips.push(`<span class="chip model">${esc(s.model)}</span>`);
+  if (s.thinkingLevel) chips.push(`<span class="chip">${esc(s.thinkingLevel)}</span>`);
+  if (s.messageCount) chips.push(`<span class="chip">${s.messageCount} msgs</span>`);
+  if (s.inputTokens || s.outputTokens) chips.push(`<span class="chip">${tokens(s)}</span>`);
+  if (s.costUsd >= 0.00005) chips.push(`<span class="chip cost">$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}</span>`);
+  const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
+  return `
+  <div class="card ${live ? "active" : ""} ${machineOnline ? "" : "offline-machine"}">
+    <div class="card-top">
+      <span class="${live ? "live" : "idle-dot"}" title="${live ? "active" : "idle"}"></span>
+      <span class="project" title="${esc(s.cwd || "")}">${esc(project)}</span>
+    </div>
+    <div class="prompt">${esc(s.firstPrompt || "(no prompt captured)")}</div>
+    <div class="meta">${chips.join("")}</div>
+    <div class="foot"><span>${live ? "running" : "idle"}</span><span title="${esc(s.startedAt || "")}">started ${rel(s.startedAt)}</span></div>
+  </div>`;
 }
 
 async function tick() {

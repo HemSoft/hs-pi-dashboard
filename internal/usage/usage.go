@@ -35,12 +35,16 @@ const (
 	KindUnknown = "unknown" // no data source exists yet
 )
 
-// Gauge is one usage window: UsedPercent is 0-100 used; the dashboard renders
-// usage *left* (100 - UsedPercent) on the speedometer.
+// Gauge is one usage window: UsedPercent is 0-100 used. The dashboard fills
+// the gauge with UsedPercent on the statusline's green→red scale and, when
+// the window timing allows it, shows ProjectedEnd — where usage lands at the
+// reset if the current pace holds (can exceed 100).
 type Gauge struct {
-	Label       string    `json:"label"`
-	UsedPercent float64   `json:"usedPercent"`
-	ResetAt     time.Time `json:"resetAt,omitempty"`
+	Label         string    `json:"label"`
+	UsedPercent   float64   `json:"usedPercent"`
+	ResetAt       time.Time `json:"resetAt,omitempty"`
+	WindowSeconds float64   `json:"windowSeconds,omitempty"`
+	ProjectedEnd  *float64  `json:"projectedEnd,omitempty"`
 }
 
 // Card is one provider's dashboard card.
@@ -290,12 +294,17 @@ func parseCodexWindows(body []byte) ([]Gauge, error) {
 		if !durationOK || duration <= 0 || (!usedOK && !resetOK) {
 			continue
 		}
-		gauge := Gauge{Label: windowLabel(duration)}
+		gauge := Gauge{Label: windowLabel(duration), WindowSeconds: duration}
 		if usedOK {
 			gauge.UsedPercent = clamp(used, 0, 100)
 		}
 		if resetOK {
 			gauge.ResetAt = time.Unix(int64(resetAt), 0).UTC()
+			// Codex windows roll from the reset time, not a calendar boundary;
+			// projections use the raw percent so >100% readings stay truthful.
+			if p, ok := projectEndPercent(gauge.Label, used, time.Until(gauge.ResetAt).Seconds(), duration, time.Now(), false); ok {
+				gauge.ProjectedEnd = &p
+			}
 		}
 		gauges = append(gauges, gauge)
 	}
@@ -336,6 +345,55 @@ func (f *Fetcher) antigravityClient() (string, string) {
 		return strings.TrimSpace(file.ClientID), strings.TrimSpace(file.ClientSecret)
 	}
 	return "", ""
+}
+
+// isWeeklyBoundary reports whether t lands within tol of a Monday 00:00 UTC
+// reset (OpenCode's weekly window is a fixed calendar week).
+func isWeeklyBoundary(t time.Time, tol time.Duration) bool {
+	utc := t.UTC()
+	secIntoDay := utc.Hour()*3600 + utc.Minute()*60 + utc.Second()
+	day := int(utc.Weekday())
+	secToMonday := ((8-day)%7)*86400 - secIntoDay
+	secSinceMonday := ((day+6)%7)*86400 + secIntoDay
+	tolSec := int64(tol.Seconds())
+	d1, d2 := int64(secToMonday), int64(secSinceMonday)
+	if d1 < 0 {
+		d1 = -d1
+	}
+	if d2 < 0 {
+		d2 = -d2
+	}
+	return min64(d1, d2) <= tolSec
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// projectEndPercent projects where usage lands at the end of the window if
+// the current pace holds: usage% / elapsedFraction. It refuses to project
+// when the window start cannot be trusted (too little elapsed, or a fixed
+// weekly window whose reset is not a clean Monday-midnight boundary).
+// Ported from the statusline extension.
+func projectEndPercent(label string, usagePercent, resetInSec, durationSec float64,
+	now time.Time, checkWeeklyBoundary bool) (float64, bool) {
+	if resetInSec <= 0 || resetInSec > durationSec || durationSec <= 0 {
+		return 0, false
+	}
+	if checkWeeklyBoundary && (label == "Weekly" || label == "W") {
+		if !isWeeklyBoundary(now.Add(time.Duration(resetInSec*float64(time.Second))), 10*time.Minute) {
+			return 0, false
+		}
+	}
+	elapsedSec := durationSec - resetInSec
+	elapsedFrac := elapsedSec / durationSec
+	if elapsedSec < 120 || elapsedFrac < 0.02 {
+		return 0, false
+	}
+	return usagePercent / elapsedFrac, true
 }
 
 // toNumber accepts the numeric shapes provider APIs emit (JSON numbers and
@@ -474,14 +532,18 @@ type goWindowSpec struct {
 	sourceKey string
 	label     string
 	duration  float64
+	// weekly uses a fixed calendar week, so end-of-window projections are only
+	// drawn when the reset lands on a Monday 00:00 UTC boundary (statusline
+	// parity); the rolling windows project unconditionally.
+	boundaryCheck bool
 }
 
 // goWindowSpecs mirrors the /go hydration keys in display order. duration is
-// used only to sanity-check resetInSec.
+// used to sanity-check resetInSec and to project end-of-window usage.
 var goWindowSpecs = []goWindowSpec{
-	{"rollingUsage", "5h", 5 * 3600},
-	{"weeklyUsage", "Weekly", 7 * 86400},
-	{"monthlyUsage", "Monthly", 30 * 86400},
+	{"rollingUsage", "5h", 5 * 3600, false},
+	{"weeklyUsage", "Weekly", 7 * 86400, true},
+	{"monthlyUsage", "Monthly", 30 * 86400, true},
 }
 
 var (
@@ -526,11 +588,16 @@ func parseGoWindow(text string, spec goWindowSpec, now time.Time) (Gauge, bool) 
 		segment := text[loc:end]
 		usage, reset := numericField(segment, "usagePercent"), numericField(segment, "resetInSec")
 		if usage != nil && reset != nil && *usage >= 0 && *reset >= 0 && *reset <= spec.duration*2 {
-			return Gauge{
-				Label:       spec.label,
-				UsedPercent: clamp(*usage, 0, 100),
-				ResetAt:     now.Add(time.Duration(*reset) * time.Second).UTC(),
-			}, true
+			gauge := Gauge{
+				Label:         spec.label,
+				UsedPercent:   clamp(*usage, 0, 100),
+				ResetAt:       now.Add(time.Duration(*reset) * time.Second).UTC(),
+				WindowSeconds: spec.duration,
+			}
+			if p, ok := projectEndPercent(spec.label, *usage, *reset, spec.duration, now, spec.boundaryCheck); ok {
+				gauge.ProjectedEnd = &p
+			}
+			return gauge, true
 		}
 		searchFrom = loc + 1 // advance past this occurrence and try the next
 	}
@@ -852,11 +919,21 @@ func parseAntigravityWindows(body []byte) ([]Gauge, error) {
 		if err != nil || !resetAt.After(now) {
 			continue
 		}
-		gauges = append(gauges, Gauge{
-			Label:       spec.label,
-			UsedPercent: math.Round(100*(1-b.RemainingFraction)*100) / 100,
-			ResetAt:     resetAt.UTC(),
-		})
+		duration := 5 * 3600
+		if spec.window == "weekly" {
+			duration = 7 * 86400
+		}
+		gauge := Gauge{
+			Label:         spec.label,
+			UsedPercent:   math.Round(100*(1-b.RemainingFraction)*100) / 100,
+			ResetAt:       resetAt.UTC(),
+			WindowSeconds: float64(duration),
+		}
+		if p, ok := projectEndPercent(spec.label, 100*(1-b.RemainingFraction),
+			time.Until(resetAt).Seconds(), float64(duration), now, false); ok {
+			gauge.ProjectedEnd = &p
+		}
+		gauges = append(gauges, gauge)
 	}
 	if len(gauges) == 0 {
 		return nil, fmt.Errorf("no quota buckets")
