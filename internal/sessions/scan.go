@@ -50,6 +50,9 @@ type Summary struct {
 	TotalTokens   int64     `json:"totalTokens"`
 	CostUSD       float64   `json:"costUsd"`
 	FirstPrompt   string    `json:"firstPrompt,omitempty"`
+
+	LastOutput   string     `json:"lastOutput,omitempty"`
+	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
 }
 
 // Snapshot is what the agent endpoint returns for one machine.
@@ -212,8 +215,9 @@ func applyEntry(s *Summary, line []byte) {
 	if err := json.Unmarshal(line, &head); err != nil {
 		return
 	}
-	if ts, ok := parseTimestamp(head.Timestamp); ok && ts.After(s.LastActivity) {
-		s.LastActivity = ts
+	entryTS, entryHasTS := parseTimestamp(head.Timestamp)
+	if entryHasTS && entryTS.After(s.LastActivity) {
+		s.LastActivity = entryTS
 	}
 
 	switch head.Type {
@@ -250,9 +254,9 @@ func applyEntry(s *Summary, line []byte) {
 				Provider string          `json:"provider"`
 				Model    string          `json:"model"`
 				Usage    *struct {
-					Input       int64   `json:"input"`
-					Output      int64   `json:"output"`
-					TotalTokens int64   `json:"totalTokens"`
+					Input       int64 `json:"input"`
+					Output      int64 `json:"output"`
+					TotalTokens int64 `json:"totalTokens"`
 					Cost        *struct {
 						Total float64 `json:"total"`
 					} `json:"cost"`
@@ -279,6 +283,16 @@ func applyEntry(s *Summary, line []byte) {
 		}
 		if s.FirstPrompt == "" && msg.Role == "user" {
 			s.FirstPrompt = firstText(msg.Content)
+		}
+		// The dashboard surfaces the agent's most recent visible text as a
+		// second row under the session; thinking and toolCall blocks are not
+		// output, so only text blocks move this forward.
+		if msg.Role == "assistant" && entryHasTS {
+			if text := firstText(msg.Content); text != "" {
+				s.LastOutput = text
+				ts := entryTS
+				s.LastOutputAt = &ts
+			}
 		}
 	}
 }

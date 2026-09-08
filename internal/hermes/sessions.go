@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	defaultMainDB     = "~/.hermes/state.db"
+	defaultMainDB      = "~/.hermes/state.db"
 	defaultProfilesDir = "~/.hermes/profiles"
-	defaultJobsJSON   = "~/.hermes/cron/jobs.json"
+	defaultJobsJSON    = "~/.hermes/cron/jobs.json"
 )
 
 // Session is one row out of Hermes' sessions table, projected to match the
@@ -49,14 +49,17 @@ type Session struct {
 	EstimatedCost   float64    `json:"estimatedCostUsd"`
 	Title           string     `json:"title,omitempty"`
 	Cwd             string     `json:"cwd,omitempty"`
+
+	LastOutput   string     `json:"lastOutput,omitempty"`
+	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
 }
 
 // Provider scans the Hermes main DB plus every profile DB under the profiles
 // dir, keeping cron-job names in memory.
 type Provider struct {
-	mainDB    string
-	profiles  string
-	jobsJSON  string
+	mainDB   string
+	profiles string
+	jobsJSON string
 }
 
 // New returns a Provider for the default locations.
@@ -232,8 +235,14 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		        started_at,
 		        ended_at,
 		        COALESCE(end_reason, ''), COALESCE(estimated_cost_usd, 0),
-		        COALESCE(title, ''), COALESCE(cwd, '')
-		 FROM sessions
+		        COALESCE(title, ''), COALESCE(cwd, ''),
+		        (SELECT content FROM messages WHERE session_id = se.id AND role = 'assistant'
+		           AND content IS NOT NULL AND TRIM(content) != '' AND content != '[SILENT]'
+		           ORDER BY timestamp DESC LIMIT 1),
+		        (SELECT timestamp FROM messages WHERE session_id = se.id AND role = 'assistant'
+		           AND content IS NOT NULL AND TRIM(content) != '' AND content != '[SILENT]'
+		           ORDER BY timestamp DESC LIMIT 1)
+		 FROM sessions se
 		 WHERE ended_at IS NULL OR ended_at > strftime('%s','now') - 86400
 		 ORDER BY started_at DESC
 		 LIMIT ?`, limit)
@@ -247,11 +256,14 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		var s Session
 		var started float64
 		var endedNull sql.NullFloat64
+		var lastOut sql.NullString
+		var lastOutTS sql.NullFloat64
 		if err := rows.Scan(
 			&s.ID, &s.Source, &s.Model, &s.BillingProvider,
 			&s.MessageCount, &s.ToolCallCount, &s.InputTokens, &s.OutputTokens,
 			&s.CacheReadTokens, &s.ReasoningTokens,
 			&started, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
+			&lastOut, &lastOutTS,
 		); err != nil {
 			continue
 		}
@@ -261,9 +273,26 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 			e := time.UnixMilli(int64(endedNull.Float64 * 1000))
 			s.EndedAt = &e
 		}
+		// The two subqueries read the same row, so pair them; a session whose
+		// assistant turns carry no visible text ([SILENT]/empty) stays blank.
+		if lastOut.Valid && lastOut.String != "" && lastOutTS.Valid {
+			s.LastOutput = condense(lastOut.String)
+			t := time.UnixMilli(int64(lastOutTS.Float64 * 1000))
+			s.LastOutputAt = &t
+		}
 		out = append(out, s)
 	}
 	return out
+}
+
+// condense flattens whitespace and caps preview length, mirroring the
+// sessions package' treatment of first prompts.
+func condense(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 160 {
+		text = strings.TrimSpace(text[:160]) + "…"
+	}
+	return text
 }
 
 var (

@@ -127,6 +127,31 @@ func TestPollIncrementalAppend(t *testing.T) {
 	}
 }
 
+func TestPollTracksLastAssistantOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeSession(t, dir, "s.jsonl",
+		`{"type":"session","version":3,"id":"out","timestamp":"2026-09-07T12:00:00Z","cwd":"/repo"}`,
+		`{"type":"message","id":"u1","timestamp":"2026-09-07T12:01:00Z","message":{"role":"user","content":"go ahead"}}`,
+		// Tool-call-only turn: not output, must not move LastOutput.
+		`{"type":"message","id":"a1","timestamp":"2026-09-07T12:02:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"tc1","name":"read"}]}}`,
+		// Thinking-only turn: also not output.
+		`{"type":"message","id":"a2","timestamp":"2026-09-07T12:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"pondering"}]}}`,
+		// Real text: becomes the last output.
+		`{"type":"message","id":"a3","timestamp":"2026-09-07T12:04:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"All tests pass now."}]}}`,
+		// A later tool-call-only turn must not clobber it.
+		`{"type":"message","id":"a4","timestamp":"2026-09-07T12:05:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"tc2","name":"edit"}]}}`,
+	)
+	scanner := NewScanner(dir, 2*time.Minute)
+	got := scanner.Poll().Sessions[0]
+	if got.LastOutput != "All tests pass now." {
+		t.Fatalf("lastOutput = %q, want the text turn", got.LastOutput)
+	}
+	want := time.Date(2026, 9, 7, 12, 4, 0, 0, time.UTC)
+	if got.LastOutputAt == nil || !got.LastOutputAt.Equal(want) {
+		t.Fatalf("lastOutputAt = %v, want %v", got.LastOutputAt, want)
+	}
+}
+
 func TestPollMarksActivityWindow(t *testing.T) {
 	dir := t.TempDir()
 	writeSession(t, dir, "s.jsonl",
