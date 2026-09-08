@@ -374,9 +374,11 @@ func min64(a, b int64) int64 {
 }
 
 // projectEndPercent projects where usage lands at the end of the window if
-// the current pace holds: usage% / elapsedFraction. It refuses to project
-// when the window start cannot be trusted (too little elapsed, or a fixed
-// weekly window whose reset is not a clean Monday-midnight boundary).
+// the current pace holds: usage% / elapsedFraction. It refuses only when the
+// window start cannot be trusted at all (less than two minutes elapsed, or a
+// fixed weekly window whose reset is not a clean Monday-midnight boundary).
+// Unlike the statusline there is no minimum elapsed fraction — early-window
+// projections are noisy but the dashboard labels them as pace estimates.
 // Ported from the statusline extension.
 func projectEndPercent(label string, usagePercent, resetInSec, durationSec float64,
 	now time.Time, checkWeeklyBoundary bool) (float64, bool) {
@@ -389,11 +391,10 @@ func projectEndPercent(label string, usagePercent, resetInSec, durationSec float
 		}
 	}
 	elapsedSec := durationSec - resetInSec
-	elapsedFrac := elapsedSec / durationSec
-	if elapsedSec < 120 || elapsedFrac < 0.02 {
+	if elapsedSec < 120 {
 		return 0, false
 	}
-	return usagePercent / elapsedFrac, true
+	return usagePercent / (elapsedSec / durationSec), true
 }
 
 // toNumber accepts the numeric shapes provider APIs emit (JSON numbers and
