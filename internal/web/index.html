@@ -204,6 +204,21 @@ function gaugeSvg(g) {
   const endDeg = 180 + sweep;
   const [capX, capY] = polar(cx, cy, r - 2, endDeg);
 
+  // Ghost projection: a faint dashed continuation from current usage to
+  // where the current pace would land at reset (capped at the dial edge;
+  // the exact number lives in the proj chip).
+  let ghost = "";
+  if (g.projectedEnd != null) {
+    const proj = Math.max(0, Math.min(100, g.projectedEnd));
+    const projDeg = 180 + (proj / 100) * 180;
+    if (projDeg - endDeg > 1) {
+      const [px, py] = polar(cx, cy, r, projDeg);
+      ghost =
+        `<path d="${arcPath(cx, cy, r, endDeg, projDeg)}" stroke="${color}" stroke-width="9" fill="none" stroke-linecap="butt" stroke-dasharray="3 6" opacity=".32"/>` +
+        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="none" stroke="${color}" stroke-width="1.5" opacity=".45"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
+    }
+  }
+
   const ticks = [];
   for (let t = 0; t <= 100; t += 10) {
     const deg = 180 + (t / 100) * 180;
@@ -238,6 +253,7 @@ function gaugeSvg(g) {
         <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="url(#${id}-bezel)" stroke-width="11" fill="none" stroke-linecap="round"/>
         <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="#000000" stroke-width="4" fill="none" stroke-linecap="round" opacity=".6"/>
         ${ticks.join("")}
+        ${ghost}
         ${sweep > 0.4 ? `
         <path d="${arcPath(cx, cy, r, 180, endDeg)}" stroke="${color}" stroke-width="11" fill="none" stroke-linecap="round"/>
         <path d="${arcPath(cx, cy, r - 3.5, 180, Math.max(180.5, endDeg - 1))}" stroke="rgba(255,255,255,.4)" stroke-width="2" fill="none" stroke-linecap="round"/>
