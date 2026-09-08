@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
+	"github.com/HemSoft/hs-pi-dashboard/internal/usage"
 	"github.com/HemSoft/hs-pi-dashboard/internal/web"
 )
 
@@ -31,6 +32,7 @@ type MachineState struct {
 	Error       string             `json:"error,omitempty"`
 	GeneratedAt time.Time          `json:"generatedAt"`
 	Sessions    []sessions.Summary `json:"sessions"`
+	Usage       *usage.Snapshot    `json:"usage,omitempty"`
 }
 
 // FleetSnapshot is the dashboard-facing aggregation of all machines.
@@ -44,9 +46,12 @@ type Server struct {
 	targets   []Target
 	pollEvery time.Duration
 	timeout   time.Duration
+	usagePoll time.Duration
 
-	mu    sync.Mutex
-	cache map[string]MachineState
+	mu        sync.Mutex
+	cache     map[string]MachineState
+	usageMu   sync.Mutex
+	usageData map[string]*usage.Snapshot
 }
 
 // ParseTargets decodes the -fleet flag: comma-separated name|url pairs.
@@ -78,7 +83,9 @@ func NewServer(targets []Target, pollEvery time.Duration) *Server {
 		targets:   targets,
 		pollEvery: pollEvery,
 		timeout:   3 * time.Second,
+		usagePoll: time.Minute,
 		cache:     make(map[string]MachineState, len(targets)),
+		usageData: make(map[string]*usage.Snapshot, len(targets)),
 	}
 }
 
@@ -90,7 +97,10 @@ func (s *Server) Run(addr string) error {
 
 	ticker := time.NewTicker(s.pollEvery)
 	defer ticker.Stop()
+	usageTicker := time.NewTicker(s.usagePoll)
+	defer usageTicker.Stop()
 	s.poll(ctx) // first pass immediately
+	go s.pollUsage(ctx)
 	go func() {
 		for {
 			select {
@@ -98,6 +108,16 @@ func (s *Server) Run(addr string) error {
 				return
 			case <-ticker.C:
 				s.poll(ctx)
+			}
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-usageTicker.C:
+				s.pollUsage(ctx)
 			}
 		}
 	}()
@@ -191,6 +211,13 @@ func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
 
 // cachedFleet snapshots the current aggregation under lock.
 func (s *Server) cachedFleet() FleetSnapshot {
+	s.usageMu.Lock()
+	usageCopy := make(map[string]*usage.Snapshot, len(s.usageData))
+	for name, snap := range s.usageData {
+		usageCopy[name] = snap
+	}
+	s.usageMu.Unlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	machines := make([]MachineState, 0, len(s.targets))
@@ -199,12 +226,69 @@ func (s *Server) cachedFleet() FleetSnapshot {
 		if !ok {
 			state = MachineState{Name: t.Name, URL: t.URL, Error: "no poll yet"}
 		}
+		if snap, ok := usageCopy[t.Name]; ok {
+			state.Usage = snap
+		}
 		machines = append(machines, state)
 	}
 	return FleetSnapshot{
 		GeneratedAt: time.Now(),
 		Machines:    machines,
 	}
+}
+
+// pollUsage fetches every machine's /usage snapshot; failures keep the last
+// good data (usage ages slowly, so gray beats blank).
+func (s *Server) pollUsage(ctx context.Context) {
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, t := range s.targets {
+		wg.Add(1)
+		go func(t Target) {
+			defer wg.Done()
+			snap := s.fetchUsage(reqCtx, t)
+			if snap == nil {
+				return
+			}
+			s.usageMu.Lock()
+			s.usageData[t.Name] = snap
+			s.usageMu.Unlock()
+		}(t)
+	}
+	wg.Wait()
+}
+
+func (s *Server) fetchUsage(ctx context.Context, t Target) *usage.Snapshot {
+	reqCtx, cancel := context.WithTimeout(ctx, s.timeout+5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet,
+		strings.TrimRight(t.URL, "/")+"/usage", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil
+	}
+	var snap usage.Snapshot
+	if json.Unmarshal(body, &snap) != nil {
+		return nil
+	}
+	if len(snap.Cards) == 0 {
+		// The agent has not finished its first refresh; keep the previous
+		// snapshot instead of caching emptiness.
+		return nil
+	}
+	return &snap
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

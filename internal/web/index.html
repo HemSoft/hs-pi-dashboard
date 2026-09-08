@@ -72,6 +72,36 @@
   .empty { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
   footer { margin-top: 12px; color: var(--muted); font-size: 11px; }
   footer a { color: var(--gold-dim); text-decoration: none; }
+
+  .usage-toggle {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    background: none; border: none; cursor: pointer; padding: 10px 2px;
+    color: var(--gold); font-family: inherit; font-size: 14px; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase; text-align: left;
+    border-bottom: 1px solid var(--card-border); margin-bottom: 14px;
+  }
+  .usage-toggle .chev { display: inline-block; transition: transform .15s; color: var(--gold-dim); }
+  .usage-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+  .usage-toggle .hint { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
+  .usage-body.collapsed { display: none; }
+  .usage-machines { display: flex; flex-direction: column; gap: 18px; margin-bottom: 10px; }
+  .usage-machine-label { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .ucard {
+    background: var(--card); border: 1px solid var(--card-border); border-radius: 4px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .ucard-label { color: var(--gold); font-weight: 600; font-size: 13px; letter-spacing: .5px; }
+  .ucard-error { color: var(--muted); font-size: 11.5px; font-style: italic; }
+  .gauges { display: flex; flex-wrap: wrap; gap: 10px; }
+  .gauge { display: flex; flex-direction: column; align-items: center; width: 96px; gap: 2px; }
+  .gauge svg { width: 96px; height: 56px; }
+  .gauge .glabel { color: var(--text); font-size: 11px; }
+  .gauge .greset { color: var(--muted); font-size: 10px; }
+  .balance { display: flex; align-items: baseline; gap: 10px; }
+  .balance .amount { color: var(--gold); font-size: 26px; font-weight: 600; }
+  .balance .unit { color: var(--muted); font-size: 11px; }
+  .usage-stale { color: var(--muted); font-size: 10px; }
 </style>
 </head>
 <body>
@@ -80,6 +110,13 @@
   <span class="sub" id="generated"></span>
   <span class="refresh"><span class="dot"></span>live · refresh 5s</span>
 </header>
+<section class="usage-section">
+  <button id="usage-toggle" class="usage-toggle" aria-expanded="true">
+    <span class="chev">▾</span> Usage &amp; Balances
+    <span class="hint">plan speedometers · balances · agent polls every 60s</span>
+  </button>
+  <div id="usage-body" class="usage-body"><p class="empty">loading usage…</p></div>
+</section>
 <main id="app"><p class="empty">loading fleet…</p></main>
 <footer>hs-pi-dashboard · <a href="/api/fleet">/api/fleet</a></footer>
 
@@ -140,6 +177,99 @@ function machineSection(m) {
   </section>`;
 }
 
+// --- usage speedometers -----------------------------------------------------
+
+function polar(cx, cy, r, deg) {
+  const a = ((deg - 180) * Math.PI) / 180;
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+// Arc swept clockwise from `startDeg` to `endDeg`; 180 is the left edge of
+// the semicircle, 360 the right.
+function arcPath(cx, cy, r, startDeg, endDeg) {
+  const [sx, sy] = polar(cx, cy, r, startDeg);
+  const [ex, ey] = polar(cx, cy, r, endDeg);
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${sx.toFixed(2)} ${sy.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`;
+}
+
+function gaugeSvg(label, usedPercent, resetAt) {
+  const remaining = Math.max(0, Math.min(100, 100 - usedPercent));
+  const sweep = (remaining / 100) * 180;
+  const color = remaining >= 25 ? "var(--gold)" : "#ff6b6b";
+  const cx = 48, cy = 48, r = 40;
+  return `
+  <div class="gauge">
+    <svg viewBox="0 0 96 56" aria-label="${esc(label)}: ${Math.round(remaining)}% left">
+      <path d="${arcPath(cx, cy, r, 180, 360)}" stroke="#1c1c1c" stroke-width="9" fill="none" stroke-linecap="round"/>
+      ${sweep > 0.5 ? `<path d="${arcPath(cx, cy, r, 180, 180 + sweep)}" stroke="${color}" stroke-width="9" fill="none" stroke-linecap="round"/>` : ""}
+      <text x="${cx}" y="44" text-anchor="middle" fill="var(--text)" font-size="15" font-weight="600">${Math.round(remaining)}%</text>
+    </svg>
+    <span class="glabel">${esc(label)}</span>
+    <span class="greset" title="${esc(resetAt || "")}">${resetAt ? "resets " + rel(resetAt) : ""}</span>
+  </div>`;
+}
+
+function usageCard(card) {
+  let body = "";
+  if (card.kind === "quota") {
+    body = card.gauges?.length
+      ? `<div class="gauges">${card.gauges.map((g) => gaugeSvg(g.label, g.usedPercent, g.resetAt)).join("")}</div>`
+      : `<span class="ucard-error">${esc(card.error || "no data")}</span>`;
+  } else if (card.kind === "balance") {
+    body = card.balanceUsd != null
+      ? `<div class="balance"><span class="amount">$${card.balanceUsd.toFixed(2)}</span><span class="unit">prepaid credit left</span></div>`
+      : `<span class="ucard-error">${esc(card.error || "unknown")}</span>`;
+  } else {
+    body = `<span class="ucard-error">${esc(card.error || "no usage source yet")}</span>`;
+  }
+  const age = card.fetchedAt ? `<span class="usage-stale" title="${esc(card.fetchedAt)}">· ${rel(card.fetchedAt)}</span>` : "";
+  return `
+  <div class="ucard">
+    <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}</div>
+    ${body}
+  </div>`;
+}
+
+function renderUsage(fleet) {
+  const body = document.getElementById("usage-body");
+  const machines = (fleet.machines ?? []).filter((m) => m.usage && m.usage.cards?.length);
+  if (!machines.length) {
+    body.innerHTML = '<p class="empty">no usage reporters online yet</p>';
+    return;
+  }
+  const showMachineLabels = machines.length > 1;
+  body.innerHTML =
+    '<div class="usage-machines">' +
+    machines
+      .map(
+        (m) => `
+      <div>
+        ${showMachineLabels ? `<div class="usage-machine-label">${esc(m.name)}</div>` : ""}
+        <div class="usage-grid">${m.usage.cards.map(usageCard).join("")}</div>
+      </div>`,
+      )
+      .join("") +
+    "</div>";
+}
+
+const USAGE_TOGGLE_KEY = "hs-pi-dashboard:usage-open";
+function initUsageToggle() {
+  const toggle = document.getElementById("usage-toggle");
+  const body = document.getElementById("usage-body");
+  const apply = (open) => {
+    toggle.setAttribute("aria-expanded", String(open));
+    body.classList.toggle("collapsed", !open);
+  };
+  const saved = localStorage.getItem(USAGE_TOGGLE_KEY);
+  apply(saved === null ? true : saved === "true");
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    apply(open);
+    localStorage.setItem(USAGE_TOGGLE_KEY, String(open));
+  });
+}
+
 async function tick() {
   try {
     const res = await fetch("/api/fleet");
@@ -148,6 +278,7 @@ async function tick() {
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
     document.getElementById("app").innerHTML =
       fleet.machines.map(machineSection).join("") || '<p class="empty">no machines configured</p>';
+    renderUsage(fleet);
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   }
@@ -155,6 +286,7 @@ async function tick() {
 
 tick();
 setInterval(tick, 5000);
+initUsageToggle();
 </script>
 </body>
 </html>

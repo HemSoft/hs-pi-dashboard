@@ -25,6 +25,15 @@ level, message count, token/cost totals, started/last-activity times, and a
 pulsing gold dot while the session is active (file written within the last 2
 minutes). Rebooted machines keep their last known sessions grayed out.
 
+Above the session grid sits an expandable/collapsible **Usage & Balances**
+section with speedometer cards per provider: Codex (weekly window),
+OpenCode Go (5h / weekly / monthly), and Antigravity (Gemini and 3P pools,
+5h + weekly) show usage *left* on the plan as gold gauges with reset
+countdowns; OpenCode Zen and Moonshot AI show prepaid dollar balances. xAI
+renders as an explicit "no usage API yet" card. The agent refreshes usage
+every 60s (endpoint `GET /usage`), the server folds it into `/api/fleet`, and
+the gauges read `100 - used_percent` so full-bleed windows read zero.
+
 The agent only reads pi's session files — it never talks to a running pi
 process, so it works whether or not pi is currently open. v2 plans a real pi
 extension for live streaming (tool calls, thinking) from running sessions.
@@ -55,7 +64,8 @@ $env:GOOS="darwin";  go build -o dist/hs-pi-dashboard-darwin-arm64 .; $env:GOOS=
 ./hs-pi-dashboard agent -addr <tailscale-ip>:8787
 ```
 
-Endpoints: `GET /sessions` (snapshot JSON), `GET /health`.
+Endpoints: `GET /sessions` (snapshot JSON), `GET /usage` (provider plan and
+balance cards), `GET /health`.
 
 ### Server (mini)
 
@@ -109,6 +119,8 @@ reach them. Add a shared token in v2 before any broader exposure.
 ## Roadmap
 
 - [ ] v2: pi extension reporting live turn/tool events from running sessions
+- [x] v1: usage speedometers (Codex, OpenCode Go, Antigravity, Zen, Moonshot)
+- [ ] v2: xAI usage once a source exists
 - [ ] v2: optional bearer token between server and agents
 - [ ] v2: systemd user unit for mini (with lingering) instead of cron
 - [ ] v3: click-through session transcript, cost rollups per project

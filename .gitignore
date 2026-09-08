@@ -3,3 +3,5 @@ hs-pi-dashboard
 dist/
 *.test
 coverage.out
+agent.log
+serve.log
