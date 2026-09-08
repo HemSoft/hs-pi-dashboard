@@ -62,7 +62,7 @@ type Output struct {
 	At   time.Time `json:"at"`
 }
 
-const maxOutputs = 5
+const maxOutputs = 2
 
 // Provider scans the Hermes main DB plus every profile DB under the profiles
 // dir, keeping cron-job names in memory.

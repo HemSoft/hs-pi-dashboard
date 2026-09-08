@@ -161,7 +161,7 @@ func TestPollTracksLastAssistantOutput(t *testing.T) {
 	}
 }
 
-func TestPollCapsOutputsAtFive(t *testing.T) {
+func TestPollCapsOutputs(t *testing.T) {
 	dir := t.TempDir()
 	lines := []string{
 		`{"type":"session","version":3,"id":"cap","timestamp":"2026-09-07T12:00:00Z","cwd":"/repo"}`,
@@ -173,11 +173,11 @@ func TestPollCapsOutputsAtFive(t *testing.T) {
 	writeSession(t, dir, "s.jsonl", lines...)
 	scanner := NewScanner(dir, 2*time.Minute)
 	got := scanner.Poll().Sessions[0]
-	if len(got.Outputs) != 5 {
-		t.Fatalf("outputs = %d, want capped at 5", len(got.Outputs))
+	if len(got.Outputs) != 2 {
+		t.Fatalf("outputs = %d, want capped at 2", len(got.Outputs))
 	}
-	if got.Outputs[0].Text != "turn 7" || got.Outputs[4].Text != "turn 3" {
-		t.Fatalf("cap window wrong: oldest kept %q, newest %q", got.Outputs[4].Text, got.Outputs[0].Text)
+	if got.Outputs[0].Text != "turn 7" || got.Outputs[1].Text != "turn 6" {
+		t.Fatalf("cap window wrong: oldest kept %q, newest %q", got.Outputs[1].Text, got.Outputs[0].Text)
 	}
 }
 

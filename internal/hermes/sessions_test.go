@@ -101,13 +101,13 @@ func TestListSurfacesRecentAssistantOutputs(t *testing.T) {
 		byID[s.ID] = s
 	}
 
-	// Newest first, capped at 5, and only visible text turns.
+	// Newest first, capped at 2, and only visible text turns.
 	rich := byID["cli_b_2"]
-	if len(rich.Outputs) != 5 {
-		t.Fatalf("outputs = %d, want capped at 5", len(rich.Outputs))
+	if len(rich.Outputs) != 2 {
+		t.Fatalf("outputs = %d, want capped at 2", len(rich.Outputs))
 	}
-	if rich.Outputs[0].Text != "brief 7" || rich.Outputs[4].Text != "brief 3" {
-		t.Fatalf("cap window wrong: oldest kept %q, newest %q", rich.Outputs[4].Text, rich.Outputs[0].Text)
+	if rich.Outputs[0].Text != "brief 7" || rich.Outputs[1].Text != "brief 6" {
+		t.Fatalf("cap window wrong: oldest kept %q, newest %q", rich.Outputs[1].Text, rich.Outputs[0].Text)
 	}
 	wantAt := time.UnixMilli(int64(1788882070 * 1000))
 	if !rich.Outputs[0].At.Equal(wantAt) {

@@ -63,7 +63,7 @@ type Output struct {
 	At   time.Time `json:"at"`
 }
 
-const maxOutputs = 5
+const maxOutputs = 2
 
 // Snapshot is what the agent endpoint returns for one machine.
 type Snapshot struct {
