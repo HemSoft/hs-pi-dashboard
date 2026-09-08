@@ -204,11 +204,11 @@ function gaugeSvg(g) {
   const endDeg = 180 + sweep;
   const [capX, capY] = polar(cx, cy, r - 2, endDeg);
 
-  // Ghost projection: a solid opaque arc from current usage to where the
-  // current pace would land at reset (capped at the dial edge; the exact
-  // number lives in the proj chip). A small notch separates measured from
-  // projected, and the segment is colored as the projected state — scale
-  // color at the projected value, alarm red when it overshoots 100%.
+  // Ghost projection: a glassy translucent arc from current usage to where
+  // the current pace would land at reset (capped at the dial edge; the exact
+  // number lives in the proj chip). A notch separates it from the measured
+  // arc; frosted halo + specular streak + rim lights give it a distinct
+  // "future pane" material. Overshoots tint the glass alarm red.
   let ghost = "";
   if (g.projectedEnd != null) {
     const proj = Math.max(0, Math.min(100, g.projectedEnd));
@@ -218,9 +218,14 @@ function gaugeSvg(g) {
       const over = g.projectedEnd > 100;
       const projColor = over ? "#ff6b6b" : usageColor(proj);
       const gapDeg = 2.5;
+      const gStart = Math.min(endDeg + gapDeg, projDeg);
       ghost =
-        `<path d="${arcPath(cx, cy, r, Math.min(endDeg + gapDeg, projDeg), projDeg)}" stroke="${projColor}" stroke-width="11" fill="none" stroke-linecap="butt" opacity="1"/>` +
-        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${projColor}" stroke="#050505" stroke-width="1.5"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
+        `<path d="${arcPath(cx, cy, r, gStart, projDeg)}" stroke="${projColor}" stroke-width="15" fill="none" stroke-linecap="butt" opacity=".22" filter="url(#${id}-frost)"/>` +
+        `<path d="${arcPath(cx, cy, r, gStart, projDeg)}" stroke="${projColor}" stroke-width="11" fill="none" stroke-linecap="butt" opacity=".5"/>` +
+        `<path d="${arcPath(cx, cy, r - 3, gStart, projDeg)}" stroke="rgba(255,255,255,.5)" stroke-width="2.2" fill="none" stroke-linecap="round"/>` +
+        `<path d="${arcPath(cx, cy, r + 5, gStart, projDeg)}" stroke="rgba(255,255,255,.28)" stroke-width="1" fill="none"/>` +
+        `<path d="${arcPath(cx, cy, r - 5, gStart, projDeg)}" stroke="rgba(0,0,0,.45)" stroke-width="1" fill="none"/>` +
+        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="${projColor}" fill-opacity=".75" stroke="rgba(255,255,255,.7)" stroke-width="1.2"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
     }
   }
 
@@ -248,6 +253,9 @@ function gaugeSvg(g) {
           <stop offset=".8" stop-color="#0d0d0d"/>
           <stop offset="1" stop-color="#181818"/>
         </radialGradient>
+        <filter id="${id}-frost" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="2.4"/>
+        </filter>
         <filter id="${id}-shadow" x="-20%" y="-20%" width="140%" height="160%">
           <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000000" flood-opacity=".9"/>
         </filter>
