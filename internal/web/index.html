@@ -133,9 +133,13 @@
     background: #0b0b0a; border-bottom: 1px solid var(--card-border);
     padding: 3px 10px 5px 26px;
   }
-  .session-table tr.subrow td > div { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-  .session-table .out-text { color: var(--text); opacity: .8; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
-  .session-table .out-age { color: var(--muted); font-size: 10.5px; flex: none; }
+  .session-table tr.subrow td > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+  .session-table .out-text {
+    color: var(--text); opacity: .8; font-size: 11px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; min-width: 0;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden;
+  }
+  .session-table .out-age { color: var(--muted); font-size: 10.5px; padding-top: 1px; }
   .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
@@ -465,25 +469,33 @@ const sessionSig = (s) => {
   const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
     s.messageCount || 0, s.inputTokens || 0, s.outputTokens || 0,
-    +(s.costUsd || 0).toFixed(4), !!s.active, s.lastOutput || ""].join("|");
+    +(s.costUsd || 0).toFixed(4), !!s.active,
+    (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
 
-// A session's most recent visible agent text renders as a second row under
-// it while fresh — tool calls and thinking never count as output. Older
-// output collapses back into the plain session row.
+// A session's recent visible agent text renders as extra rows under it —
+// up to 5, newest first, formatted as emitted (newlines and indentation
+// kept; markdown stays literal). Tool calls and thinking never count. The
+// block only shows while the newest output is fresh; older sessions
+// collapse back to the plain row.
 const FRESH_OUTPUT_MS = 10 * 60e3;
 
-function outputSubrow(s, flash) {
-  if (!s.lastOutput || !s.lastOutputAt) return "";
-  const age = Date.now() - new Date(s.lastOutputAt).getTime();
-  if (!Number.isFinite(age) || age < 0 || age > FRESH_OUTPUT_MS) return "";
-  const cls = "subrow" + (flash ? " flash" : "");
-  return `
+function outputSubrows(s, flash) {
+  const outs = s.outputs || [];
+  if (!outs.length) return "";
+  const age0 = Date.now() - new Date(outs[0].at).getTime();
+  if (!Number.isFinite(age0) || age0 < 0 || age0 > FRESH_OUTPUT_MS) return "";
+  return outs.map((o, i) => {
+    const age = Date.now() - new Date(o.at).getTime();
+    if (!Number.isFinite(age) || age < 0) return "";
+    const cls = "subrow" + (i === 0 && flash ? " flash" : "");
+    return `
   <tr class="${cls}"><td colspan="9"><div>
-    <span class="out-text" title="${esc(s.lastOutput)}">${esc(s.lastOutput)}</span>
-    <span class="out-age" title="${esc(s.lastOutputAt)}">${compactDur(age)}</span>
+    <span class="out-text" title="${esc(o.text)}">${esc(o.text)}</span>
+    <span class="out-age" title="${esc(o.at)}">${compactDur(age)}</span>
   </div></td></tr>`;
+  }).join("");
 }
 
 function sessionsTable(machines, hermesSessions) {
@@ -511,8 +523,7 @@ function sessionsTable(machines, hermesSessions) {
       startedAt: s.startedAt,
       lastActivity: s.endedAt || s.startedAt,
       active: !s.endedAt,
-      lastOutput: s.lastOutput || "",
-      lastOutputAt: s.lastOutputAt || null,
+      outputs: s.outputs || [],
     };
     newSigs["hermes/" + (s.id || "")] = sessionSig(entry);
     const machineLabel = "mini (" + (profileAlias || "hermes") + ")";
@@ -528,8 +539,8 @@ function sessionsTable(machines, hermesSessions) {
   const rows = flat.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
-    const sub = outputSubrow(entry.s, flash);
-    return sessionRow(entry.s, entry.m, flash, entry.kind, !!sub) + sub;
+    const subs = outputSubrows(entry.s, flash);
+    return sessionRow(entry.s, entry.m, flash, entry.kind, !!subs) + subs;
   });
   lastSigs = newSigs;
   const nothing = !flat.length;

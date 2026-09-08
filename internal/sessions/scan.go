@@ -51,9 +51,19 @@ type Summary struct {
 	CostUSD       float64   `json:"costUsd"`
 	FirstPrompt   string    `json:"firstPrompt,omitempty"`
 
-	LastOutput   string     `json:"lastOutput,omitempty"`
-	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
+	// Outputs are the session's most recent visible agent texts, newest
+	// first and capped at maxOutputs. Thinking and tool calls never count.
+	Outputs []Output `json:"outputs,omitempty"`
 }
+
+// Output is one assistant text turn, kept as it was emitted (newlines and
+// indentation intact) so the dashboard can reproduce the original shape.
+type Output struct {
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+const maxOutputs = 5
 
 // Snapshot is what the agent endpoint returns for one machine.
 type Snapshot struct {
@@ -284,14 +294,15 @@ func applyEntry(s *Summary, line []byte) {
 		if s.FirstPrompt == "" && msg.Role == "user" {
 			s.FirstPrompt = firstText(msg.Content)
 		}
-		// The dashboard surfaces the agent's most recent visible text as a
-		// second row under the session; thinking and toolCall blocks are not
-		// output, so only text blocks move this forward.
+		// The dashboard surfaces the agent's recent visible text as extra
+		// rows under the session; thinking and toolCall blocks are not
+		// output, so only text blocks count.
 		if msg.Role == "assistant" && entryHasTS {
-			if text := firstText(msg.Content); text != "" {
-				s.LastOutput = text
-				ts := entryTS
-				s.LastOutputAt = &ts
+			if text := capRaw(allText(msg.Content)); text != "" {
+				s.Outputs = append([]Output{{Text: text, At: entryTS}}, s.Outputs...)
+				if len(s.Outputs) > maxOutputs {
+					s.Outputs = s.Outputs[:maxOutputs]
+				}
 			}
 		}
 	}
@@ -316,6 +327,49 @@ func rawString(raw json.RawMessage) string {
 		return fmt.Sprintf("%g", num)
 	}
 	return ""
+}
+
+// allText joins every text block of a message in order with blank lines,
+// preserving the newlines the agent actually emitted; thinking and toolCall
+// blocks are skipped.
+func allText(content json.RawMessage) string {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var text string
+		if json.Unmarshal(trimmed, &text) == nil {
+			return text
+		}
+		return ""
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(trimmed, &blocks) != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// maxOutputChars bounds each stored output; the dashboard renders them with
+// original formatting, so length is capped but newlines are kept.
+const maxOutputChars = 800
+
+// capRaw trims trailing whitespace and clamps length without flattening the
+// newlines, unlike condense.
+func capRaw(text string) string {
+	text = strings.TrimRight(text, " \t\r\n")
+	runes := []rune(text)
+	if len(runes) > maxOutputChars {
+		return string(runes[:maxOutputChars]) + "…"
+	}
+	return text
 }
 
 func firstText(content json.RawMessage) string {

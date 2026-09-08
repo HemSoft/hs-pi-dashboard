@@ -50,9 +50,19 @@ type Session struct {
 	Title           string     `json:"title,omitempty"`
 	Cwd             string     `json:"cwd,omitempty"`
 
-	LastOutput   string     `json:"lastOutput,omitempty"`
-	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
+	// Outputs are the session's most recent visible assistant texts, newest
+	// first and capped at maxOutputs. '' and '[SILENT]' turns never count.
+	Outputs []Output `json:"outputs,omitempty"`
 }
+
+// Output is one assistant text turn, kept as it was emitted (newlines and
+// indentation intact) so the dashboard can reproduce the original shape.
+type Output struct {
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+const maxOutputs = 5
 
 // Provider scans the Hermes main DB plus every profile DB under the profiles
 // dir, keeping cron-job names in memory.
@@ -235,13 +245,7 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		        started_at,
 		        ended_at,
 		        COALESCE(end_reason, ''), COALESCE(estimated_cost_usd, 0),
-		        COALESCE(title, ''), COALESCE(cwd, ''),
-		        (SELECT content FROM messages WHERE session_id = se.id AND role = 'assistant'
-		           AND content IS NOT NULL AND TRIM(content) != '' AND content != '[SILENT]'
-		           ORDER BY timestamp DESC LIMIT 1),
-		        (SELECT timestamp FROM messages WHERE session_id = se.id AND role = 'assistant'
-		           AND content IS NOT NULL AND TRIM(content) != '' AND content != '[SILENT]'
-		           ORDER BY timestamp DESC LIMIT 1)
+		        COALESCE(title, ''), COALESCE(cwd, '')
 		 FROM sessions se
 		 WHERE ended_at IS NULL OR ended_at > strftime('%s','now') - 86400
 		 ORDER BY started_at DESC
@@ -256,14 +260,11 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		var s Session
 		var started float64
 		var endedNull sql.NullFloat64
-		var lastOut sql.NullString
-		var lastOutTS sql.NullFloat64
 		if err := rows.Scan(
 			&s.ID, &s.Source, &s.Model, &s.BillingProvider,
 			&s.MessageCount, &s.ToolCallCount, &s.InputTokens, &s.OutputTokens,
 			&s.CacheReadTokens, &s.ReasoningTokens,
 			&started, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
-			&lastOut, &lastOutTS,
 		); err != nil {
 			continue
 		}
@@ -273,24 +274,70 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 			e := time.UnixMilli(int64(endedNull.Float64 * 1000))
 			s.EndedAt = &e
 		}
-		// The two subqueries read the same row, so pair them; a session whose
-		// assistant turns carry no visible text ([SILENT]/empty) stays blank.
-		if lastOut.Valid && lastOut.String != "" && lastOutTS.Valid {
-			s.LastOutput = condense(lastOut.String)
-			t := time.UnixMilli(int64(lastOutTS.Float64 * 1000))
-			s.LastOutputAt = &t
-		}
 		out = append(out, s)
 	}
+	attachOutputs(db, out)
 	return out
 }
 
-// condense flattens whitespace and caps preview length, mirroring the
-// sessions package' treatment of first prompts.
-func condense(text string) string {
-	text = strings.Join(strings.Fields(text), " ")
-	if len(text) > 160 {
-		text = strings.TrimSpace(text[:160]) + "…"
+// attachOutputs fills each session's Outputs with its most recent visible
+// assistant texts (newest first, capped). One grouped query per DB; the
+// idx_messages_session index keeps it cheap. Read-only by design.
+func attachOutputs(db *sql.DB, sessions []Session) {
+	if len(sessions) == 0 {
+		return
+	}
+	args := make([]any, len(sessions))
+	placeholders := make([]string, len(sessions))
+	for i, s := range sessions {
+		args[i] = s.ID
+		placeholders[i] = "?"
+	}
+	rows, err := db.Query(`SELECT session_id, content, timestamp FROM messages
+		WHERE role = 'assistant' AND content IS NOT NULL
+		  AND TRIM(content) != '' AND content != '[SILENT]'
+		  AND session_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY timestamp DESC`, args...)
+	if err != nil {
+		return // outputs are best-effort; sessions still render without them
+	}
+	defer rows.Close()
+
+	byID := make(map[string]*Session, len(sessions))
+	for i := range sessions {
+		byID[sessions[i].ID] = &sessions[i]
+	}
+	counts := make(map[string]int)
+	for rows.Next() {
+		var sid, content string
+		var ts sql.NullFloat64
+		if err := rows.Scan(&sid, &content, &ts); err != nil || !ts.Valid {
+			continue
+		}
+		if counts[sid] >= maxOutputs {
+			continue
+		}
+		counts[sid]++
+		if s := byID[sid]; s != nil {
+			s.Outputs = append(s.Outputs, Output{
+				Text: capRaw(content),
+				At:   time.UnixMilli(int64(ts.Float64 * 1000)),
+			})
+		}
+	}
+}
+
+// maxOutputChars bounds each stored output; the dashboard renders them with
+// original formatting, so length is capped but newlines are kept.
+const maxOutputChars = 800
+
+// capRaw trims trailing whitespace and clamps length without flattening the
+// newlines.
+func capRaw(text string) string {
+	text = strings.TrimRight(text, " \t\r\n")
+	runes := []rune(text)
+	if len(runes) > maxOutputChars {
+		return string(runes[:maxOutputChars]) + "…"
 	}
 	return text
 }

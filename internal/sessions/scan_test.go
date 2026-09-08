@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -132,23 +133,51 @@ func TestPollTracksLastAssistantOutput(t *testing.T) {
 	writeSession(t, dir, "s.jsonl",
 		`{"type":"session","version":3,"id":"out","timestamp":"2026-09-07T12:00:00Z","cwd":"/repo"}`,
 		`{"type":"message","id":"u1","timestamp":"2026-09-07T12:01:00Z","message":{"role":"user","content":"go ahead"}}`,
-		// Tool-call-only turn: not output, must not move LastOutput.
+		// Tool-call-only turn: not output, must not appear.
 		`{"type":"message","id":"a1","timestamp":"2026-09-07T12:02:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"tc1","name":"read"}]}}`,
 		// Thinking-only turn: also not output.
 		`{"type":"message","id":"a2","timestamp":"2026-09-07T12:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"pondering"}]}}`,
-		// Real text: becomes the last output.
-		`{"type":"message","id":"a3","timestamp":"2026-09-07T12:04:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"All tests pass now."}]}}`,
+		// Real text: becomes an output, keeping its embedded newlines.
+		`{"type":"message","id":"a3","timestamp":"2026-09-07T12:04:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"All tests pass now.\n\n- one\n- two"}]}}`,
 		// A later tool-call-only turn must not clobber it.
 		`{"type":"message","id":"a4","timestamp":"2026-09-07T12:05:00Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"tc2","name":"edit"}]}}`,
+		// A second text turn lands newest-first.
+		`{"type":"message","id":"a5","timestamp":"2026-09-07T12:06:00Z","message":{"role":"assistant","content":"Deployed."}}`,
 	)
 	scanner := NewScanner(dir, 2*time.Minute)
 	got := scanner.Poll().Sessions[0]
-	if got.LastOutput != "All tests pass now." {
-		t.Fatalf("lastOutput = %q, want the text turn", got.LastOutput)
+	if len(got.Outputs) != 2 {
+		t.Fatalf("outputs = %d, want 2", len(got.Outputs))
 	}
-	want := time.Date(2026, 9, 7, 12, 4, 0, 0, time.UTC)
-	if got.LastOutputAt == nil || !got.LastOutputAt.Equal(want) {
-		t.Fatalf("lastOutputAt = %v, want %v", got.LastOutputAt, want)
+	if got.Outputs[0].Text != "Deployed." {
+		t.Fatalf("newest output = %q, want Deployed.", got.Outputs[0].Text)
+	}
+	want := time.Date(2026, 9, 7, 12, 6, 0, 0, time.UTC)
+	if !got.Outputs[0].At.Equal(want) {
+		t.Fatalf("newest at = %v, want %v", got.Outputs[0].At, want)
+	}
+	if got.Outputs[1].Text != "All tests pass now.\n\n- one\n- two" {
+		t.Fatalf("older output = %q, want the multi-line text verbatim", got.Outputs[1].Text)
+	}
+}
+
+func TestPollCapsOutputsAtFive(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		`{"type":"session","version":3,"id":"cap","timestamp":"2026-09-07T12:00:00Z","cwd":"/repo"}`,
+	}
+	for i := 1; i <= 7; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"message","id":"a%d","timestamp":"2026-09-07T12:%02d:00Z","message":{"role":"assistant","content":"turn %d"}}`, i, i, i))
+	}
+	writeSession(t, dir, "s.jsonl", lines...)
+	scanner := NewScanner(dir, 2*time.Minute)
+	got := scanner.Poll().Sessions[0]
+	if len(got.Outputs) != 5 {
+		t.Fatalf("outputs = %d, want capped at 5", len(got.Outputs))
+	}
+	if got.Outputs[0].Text != "turn 7" || got.Outputs[4].Text != "turn 3" {
+		t.Fatalf("cap window wrong: oldest kept %q, newest %q", got.Outputs[4].Text, got.Outputs[0].Text)
 	}
 }
 
