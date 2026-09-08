@@ -204,27 +204,30 @@ function gaugeSvg(g) {
   const endDeg = 180 + sweep;
   const [capX, capY] = polar(cx, cy, r - 2, endDeg);
 
-  // Ghost projection: a faint dashed continuation from current usage to
-  // where the current pace would land at reset (capped at the dial edge;
-  // the exact number lives in the proj chip).
+  // Ghost projection: a thin sparse dashed guide line along the center of
+  // the track, from current usage to where the current pace would land at
+  // reset (capped at the dial edge; the exact number lives in the proj
+  // chip). Deliberately quieter than the solid arc so a 137% projection
+  // doesn't wallpaper the whole dial.
   let ghost = "";
   if (g.projectedEnd != null) {
     const proj = Math.max(0, Math.min(100, g.projectedEnd));
     const projDeg = 180 + (proj / 100) * 180;
     if (projDeg - endDeg > 1) {
       const [px, py] = polar(cx, cy, r, projDeg);
+      const over = g.projectedEnd > 100;
       ghost =
-        `<path d="${arcPath(cx, cy, r, endDeg, projDeg)}" stroke="${color}" stroke-width="9" fill="none" stroke-linecap="butt" stroke-dasharray="3 6" opacity=".32"/>` +
-        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="none" stroke="${color}" stroke-width="1.5" opacity=".45"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
+        `<path d="${arcPath(cx, cy, r, endDeg, projDeg)}" stroke="${over ? "#ff6b6b" : color}" stroke-width="4" fill="none" stroke-linecap="butt" stroke-dasharray="2 9" opacity=".4"/>` +
+        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="5.5" fill="none" stroke="${over ? "#ff6b6b" : color}" stroke-width="1.5" opacity=".55"/><title>projected ${Math.round(g.projectedEnd)}% at reset</title>`;
     }
   }
 
   const ticks = [];
   for (let t = 0; t <= 100; t += 10) {
     const deg = 180 + (t / 100) * 180;
-    const [x1, y1] = polar(cx, cy, r + 7.5, deg);
-    const [x2, y2] = polar(cx, cy, r + (t % 25 === 0 ? 12 : 10), deg);
-    ticks.push(`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${t % 25 === 0 ? "#5a5240" : "#2c2c2c"}" stroke-width="1"/>`);
+    const [x1, y1] = polar(cx, cy, r + 7, deg);
+    const [x2, y2] = polar(cx, cy, r + (t % 25 === 0 ? 10.5 : 9), deg);
+    ticks.push(`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${t % 25 === 0 ? "#4a4436" : "#232323"}" stroke-width="1"/>`);
   }
 
   const face = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy} L ${cx - r} ${cy} Z`;
