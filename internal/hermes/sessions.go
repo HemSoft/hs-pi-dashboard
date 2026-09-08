@@ -1,15 +1,17 @@
 // Package hermes surfaces live Hermes Agent sessions from ~/.hermes/state.db
 // alongside pi sessions on the fleet dashboard.
 //
-// Hermes persists all CLI, TUI, gateway, and cron sessions to a single
-// SQLite database at ~/.hermes/state.db. Reading the `sessions` table is the
-// least invasive integration: it's a stable-enough schema, we only do
-// SELECTs, and Hermes upgrades are additively compatible. We never write to
-// this DB.
+// Hermes keeps a single state.db for the main gateway plus one per profile
+// under ~/.hermes/profiles/<name>/. Reading the same `sessions` table in each
+// is the least invasive integration: it's a stable-enough schema, we only do
+// SELECTs, and Hermes upgrades are additively compatible. We never write.
+// Cron job names are re-read from ~/.hermes/cron/jobs.json each Snapshot so a
+// human-edited job label lands without a redeploy.
 package hermes
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,15 +22,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// defaultDBPath is where Hermes keeps state.db.
-const defaultDBPath = "~/.hermes/state.db"
+const (
+	defaultMainDB     = "~/.hermes/state.db"
+	defaultProfilesDir = "~/.hermes/profiles"
+	defaultJobsJSON   = "~/.hermes/cron/jobs.json"
+)
 
 // Session is one row out of Hermes' sessions table, projected to match the
-// sessions.Summary shape the dashboard already renders.
+// dashboard's shape.
 type Session struct {
 	ID              string     `json:"id"`
 	Source          string     `json:"source"`
 	Profile         string     `json:"profile,omitempty"`
+	Name            string     `json:"name,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	BillingProvider string     `json:"billingProvider,omitempty"`
 	MessageCount    int        `json:"messageCount"`
@@ -45,32 +51,173 @@ type Session struct {
 	Cwd             string     `json:"cwd,omitempty"`
 }
 
-// Provider scans a Hermes SQLite state DB for sessions. Like the sessions
-// scanner, it's cheap to poll: on each call we re-query and there's no
-// retained state between polls.
+// Provider scans the Hermes main DB plus every profile DB under the profiles
+// dir, keeping cron-job names in memory.
 type Provider struct {
-	dbPath string
+	mainDB    string
+	profiles  string
+	jobsJSON  string
 }
 
-// New returns a Provider for the default DB path. Missing paths return a
-// Provider that always yields an empty snapshot — the dashboard just renders
-// no Hermes rows in that case.
+// New returns a Provider for the default locations.
 func New() *Provider {
-	return &Provider{dbPath: expandTilde(defaultDBPath)}
+	return &Provider{
+		mainDB:   expandTilde(defaultMainDB),
+		profiles: expandTilde(defaultProfilesDir),
+		jobsJSON: expandTilde(defaultJobsJSON),
+	}
 }
 
-// List returns the most recent sessions ordered by started_at, capped at
-// limit. Errors collapse to an empty list: Hermes upgrading, migrating, or
-// the DB lock being momentarily held are all normal and not worth showing in
-// the panel.
+// Snapshot returns the current session list.
+func (p *Provider) Snapshot(limit int) Snapshot {
+	return Snapshot{
+		GeneratedAt: time.Now(),
+		Sessions:    p.List(limit),
+	}
+}
+
+// Snapshot is what /api/hermes-sessions serves.
+type Snapshot struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+	Sessions    []Session `json:"sessions"`
+}
+
+type profileEntry struct {
+	profile string
+	path    string
+}
+
+// jobsFile is the parsed form of ~/.hermes/cron/jobs.json.
+type jobsFile struct {
+	Jobs []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"jobs"`
+}
+
+// List returns the most recent sessions aggregated across the main DB and
+// all profile DBs, ordered by started_at(newest first) and capped at limit.
+// Errors collapse to an empty list: Hermes upgrading, migrating, or the DB
+// lock being momentarily held are all normal and not worth surfacing.
 func (p *Provider) List(limit int) []Session {
 	if limit <= 0 {
 		limit = 50
 	}
-	if _, err := os.Stat(p.dbPath); err != nil {
+	out := p.queryDB("default", p.mainDB, limit)
+	for _, entry := range p.profileDBs() {
+		out = append(out, p.queryDB(entry.profile, entry.path, limit)...)
+	}
+	// newest first
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].StartedAt.After(out[i].StartedAt) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return p.withJobNames(out)
+}
+
+// withJobNames derives a session Name from ~/.hermes/cron/jobs.json when the
+// ID matches a cron's stored pattern; falls back to Source+ID fragment.
+// Cron rows carry the pattern `cron_<jobid>_<timestamp>` where <jobid> is the
+// short hex key in jobs.json.
+func (p *Provider) withJobNames(list []Session) []Session {
+	names := p.jobNames()
+	for i, s := range list {
+		if names[s.ID] != "" {
+			list[i].Name = names[s.ID]
+			continue
+		}
+		// Try the cron suffix: cron_<shortID>_<ts>. Skip when the ID isn't in
+		// the cron shape.
+		if rest, ok := strings.CutPrefix(s.ID, "cron_"); ok {
+			if idx := strings.Index(rest, "_"); idx > 0 {
+				if _, ok := names[rest[:idx]]; ok {
+					list[i].Name = "cron: " + cronNameFor(rest[:idx], names)
+					continue
+				}
+			}
+		}
+		list[i].Name = s.Source
+		if s.ID != "" {
+			if len(s.ID) > 8 {
+				list[i].Name += ":" + s.ID[:8]
+			} else {
+				list[i].Name += ":" + s.ID
+			}
+		}
+	}
+	return list
+}
+
+// cronNameFor returns a short, dashboard-friendly label for a cron job. The
+// profile column already carries COS/Janitor/Developer, so long names just
+// repeat. If the job has no explicit entry we fall back to the raw id.
+func cronNameFor(id string, names map[string]string) string {
+	switch id {
+	case "3234aa52438e":
+		return "heartbeat"
+	case "249daf42cf09":
+		return "heartbeat"
+	case "a431086f3580":
+		return "heartbeat"
+	default:
+		if names[id] != "" {
+			return names[id]
+		}
+		return id
+	}
+}
+
+// jobNames returns the id→name map. It's re-loaded on every Snapshot so
+// adding/removing a cron job lands without a binary redeploy.
+func (p *Provider) jobNames() map[string]string {
+	names := map[string]string{}
+	data, err := os.ReadFile(p.jobsJSON)
+	if err != nil {
+		return names
+	}
+	var jf jobsFile
+	if json.Unmarshal(data, &jf) != nil {
+		return names
+	}
+	for _, j := range jf.Jobs {
+		if j.ID != "" && j.Name != "" {
+			names[j.ID] = j.Name
+		}
+	}
+	return names
+}
+
+// profileDBs lists each ~/.hermes/profiles/<name>/state.db.
+func (p *Provider) profileDBs() []profileEntry {
+	entries, err := os.ReadDir(p.profiles)
+	if err != nil {
 		return nil
 	}
-	dsn := "file:" + url.QueryEscape(p.dbPath) + "?mode=ro&_journal_mode=WAL"
+	var out []profileEntry
+	for _, de := range entries {
+		if !de.IsDir() {
+			continue
+		}
+		path := filepath.Join(p.profiles, de.Name(), "state.db")
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		out = append(out, profileEntry{profile: de.Name(), path: path})
+	}
+	return out
+}
+
+func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil
+	}
+	dsn := "file:" + url.QueryEscape(dbPath) + "?mode=ro&_journal_mode=WAL"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
@@ -78,8 +225,7 @@ func (p *Provider) List(limit int) []Session {
 	defer db.Close()
 
 	rows, err := db.Query(
-		`SELECT id, COALESCE(source, ''), COALESCE(profile_name, ''),
-		        COALESCE(model, ''), COALESCE(billing_provider, ''),
+		`SELECT id, COALESCE(source, ''), COALESCE(model, ''), COALESCE(billing_provider, ''),
 		        COALESCE(message_count, 0), COALESCE(tool_call_count, 0),
 		        COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
 		        COALESCE(cache_read_tokens, 0), COALESCE(reasoning_tokens, 0),
@@ -96,42 +242,28 @@ func (p *Provider) List(limit int) []Session {
 	}
 	defer rows.Close()
 
-	out := make([]Session, 0, limit)
+	var out []Session
 	for rows.Next() {
 		var s Session
-		var started, ended float64
+		var started float64
 		var endedNull sql.NullFloat64
 		if err := rows.Scan(
-			&s.ID, &s.Source, &s.Profile, &s.Model, &s.BillingProvider,
+			&s.ID, &s.Source, &s.Model, &s.BillingProvider,
 			&s.MessageCount, &s.ToolCallCount, &s.InputTokens, &s.OutputTokens,
 			&s.CacheReadTokens, &s.ReasoningTokens,
 			&started, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
 		); err != nil {
-			return nil
+			continue
 		}
+		s.Profile = profile
 		s.StartedAt = time.UnixMilli(int64(started * 1000))
 		if endedNull.Valid {
-			ended = endedNull.Float64
-			e := time.UnixMilli(int64(ended * 1000))
+			e := time.UnixMilli(int64(endedNull.Float64 * 1000))
 			s.EndedAt = &e
 		}
 		out = append(out, s)
 	}
 	return out
-}
-
-// Snapshot is what /api/hermes-sessions serves.
-type Snapshot struct {
-	GeneratedAt time.Time `json:"generatedAt"`
-	Sessions    []Session `json:"sessions"`
-}
-
-// Snapshot returns the current session list.
-func (p *Provider) Snapshot(limit int) Snapshot {
-	return Snapshot{
-		GeneratedAt: time.Now(),
-		Sessions:    p.List(limit),
-	}
 }
 
 var (

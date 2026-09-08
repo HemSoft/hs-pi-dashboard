@@ -86,9 +86,10 @@
   }
   .ucard-compact .mini .gproj { font-size: 10.5px; }
 
-  .session-table-wrap { overflow-x: auto; border: 1px solid var(--card-border); border-radius: 4px; background: var(--card); }
+  .session-table-wrap { border: 1px solid var(--card-border); border-radius: 4px; background: var(--card); }
   .session-table {
     width: 100%; border-collapse: collapse; font-size: 11px;
+    table-layout: fixed;
   }
   .session-table th {
     position: sticky; top: 0; background: var(--card);
@@ -101,6 +102,16 @@
     padding: 6px 10px; border-bottom: 1px solid var(--card-border);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* computer / title / provider / model / effort / msgs / started / price / duration */
+  .session-table th:nth-child(1), .session-table td:nth-child(1) { width: 10%; }
+  .session-table th:nth-child(2), .session-table td:nth-child(2) { width: 20%; }
+  .session-table th:nth-child(3), .session-table td:nth-child(3) { width: 12%; }
+  .session-table th:nth-child(4), .session-table td:nth-child(4) { width: 16%; }
+  .session-table th:nth-child(5), .session-table td:nth-child(5) { width: 6%; }
+  .session-table th:nth-child(6), .session-table td:nth-child(6) { width: 6%; }
+  .session-table th:nth-child(7), .session-table td:nth-child(7) { width: 12%; }
+  .session-table th:nth-child(8), .session-table td:nth-child(8) { width: 8%; }
+  .session-table th:nth-child(9), .session-table td:nth-child(9) { width: 10%; }
   .session-table tr.machine-head td {
     background: #080808; color: var(--gold);
     font-size: 11px; letter-spacing: 1px;
@@ -117,7 +128,7 @@
     to { background-color: transparent; box-shadow: none; }
   }
   .session-table tr:last-child td { border-bottom: 0; }
-  .session-table .title { color: var(--gold); font-weight: 600; max-width: 380px; }
+  .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
   .empty-line { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
@@ -174,9 +185,29 @@ function resetCountdown(resetAt) {
   return "resets in " + compactDur(ms);
 }
 
-function tokens(s) {
-  const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n ?? 0);
-  return `▲${fmt(s.inputTokens)} ▼${fmt(s.outputTokens)}`;
+// Started wall-clock time pinned to the fleet's home timezone (Eastern, so
+// EST/EDT follows the calendar). A bare "22:14" is ambiguous for sessions
+// started days ago, so off-day starts get a date prefix.
+const HOME_TZ = "America/New_York";
+function startedTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const tzDate = { timeZone: HOME_TZ };
+  const time = d.toLocaleTimeString("en-US", { ...tzDate, hour: "2-digit", minute: "2-digit", hour12: false });
+  if (d.toLocaleDateString("en-US", tzDate) === new Date().toLocaleDateString("en-US", tzDate)) return time;
+  return d.toLocaleDateString("en-US", { ...tzDate, month: "short", day: "numeric" }) + " " + time;
+}
+
+// Session span. Active sessions are still growing, so measure to now (this
+// recomputes on every 5s render); ended/idle ones measure to their last
+// write — Hermes folds endedAt into lastActivity upstream.
+function durationOf(s) {
+  if (!s.startedAt) return "";
+  const start = new Date(s.startedAt).getTime();
+  const end = s.active ? Date.now() : new Date(s.lastActivity || s.startedAt).getTime();
+  const ms = end - start;
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  return compactDur(ms);
 }
 
 // --- usage speedometers -----------------------------------------------------
@@ -453,11 +484,12 @@ function sessionsTable(machines, hermesSessions) {
     });
   });
   (hermesSessions ?? []).forEach((s) => {
+    const profileAlias = { default: "COS", janitor: "Janitor", developer: "Developer" }[s.profile] || s.profile;
     const entry = {
       id: s.id,
       cwd: s.cwd || "~/.hermes",
-      project: s.source + ":" + (s.id || "").slice(0, 8),
-      provider: "hermes:cli",
+      project: (s.name || s.source + ":" + (s.id || "").slice(0, 8)) + (profileAlias ? " [" + profileAlias + "]" : ""),
+      provider: "hermes:" + (s.profile || "unknown"),
       model: s.model || "",
       thinkingLevel: "",
       messageCount: s.messageCount || 0,
@@ -469,7 +501,8 @@ function sessionsTable(machines, hermesSessions) {
       active: !s.endedAt,
     };
     newSigs["hermes/" + (s.id || "")] = sessionSig(entry);
-    flat.push({ s: entry, m: { name: "mini (hermes)", online: true }, kind: "hermes" });
+    const machineLabel = "mini (" + (profileAlias || "hermes") + ")";
+    flat.push({ s: entry, m: { name: machineLabel, online: true }, kind: "hermes" });
   });
   // Recency first: active sessions bubble ahead of idle.
   flat.sort((a, b) => {
@@ -494,7 +527,7 @@ function sessionsTable(machines, hermesSessions) {
     <table class="session-table">
       <thead>
         <tr>
-          <th>computer</th><th>session title</th><th>provider</th><th>model</th><th>effort</th><th>msgs</th><th>↑ in ↓ out</th><th>price</th><th>runtime</th>
+          <th>computer</th><th>session title</th><th>provider</th><th>model</th><th>effort</th><th>msgs</th><th>started</th><th>price</th><th>duration</th>
         </tr>
       </thead>
       <tbody>${body}</tbody>
@@ -509,9 +542,9 @@ function sessionRow(s, m, flash, kind) {
   const model = s.model || "";
   const effort = s.thinkingLevel || "";
   const msgs = s.messageCount ? String(s.messageCount) : "";
-  const tok = s.inputTokens || s.outputTokens ? tokens(s) : "";
+  const started = startedTime(s.startedAt);
+  const dur = durationOf(s);
   const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
-  const runtime = s.startedAt && (kind === "pi" || s.active || s.startedAt) ? rel(s.startedAt) : "";
   const cls = (live ? "active" : "offline") + (flash ? " flash" : "");
   return `
   <tr class="${cls}">
@@ -521,9 +554,9 @@ function sessionRow(s, m, flash, kind) {
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
     <td>${msgs}</td>
-    <td>${esc(tok)}</td>
+    <td title="${esc(s.startedAt || "")}">${esc(started)}</td>
     <td>${price}</td>
-    <td title="${esc(s.startedAt || "")}">${runtime}</td>
+    <td>${esc(dur)}</td>
   </tr>`;
 }
 
