@@ -488,22 +488,12 @@ const expandedOutputs = new Set();
 const PAGE_SIZE = 20;
 let currentPage = 1;
 
-// A session's recent visible agent text renders as extra rows under it —
-// capped, newest first, formatted as emitted (newlines and indentation
-// kept; markdown stays literal). Tool calls and thinking never count. The
-// block shows only while the newest output is fresh, and only for sessions
-// the user expanded; stale keys fall back out of the expanded set.
-const FRESH_OUTPUT_MS = 10 * 60e3;
-
-function freshOutputs(s, key) {
+// Any session with stored output can be expanded, however old it is; the
+// only gate is that visible output exists at all. Expansion is purely
+// user-driven (default collapsed) and persists across re-renders.
+function availableOutputs(s) {
   const outs = s.outputs || [];
-  if (!outs.length) return null;
-  const age0 = Date.now() - new Date(outs[0].at).getTime();
-  if (!Number.isFinite(age0) || age0 < 0 || age0 > FRESH_OUTPUT_MS) {
-    expandedOutputs.delete(key);
-    return null;
-  }
-  return outs;
+  return outs.length ? outs : null;
 }
 
 // Pure renderer for one session's output rows (newest first).
@@ -566,7 +556,7 @@ function sessionsTable(machines, hermesSessions) {
   const rows = pageItems.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
-    const outs = freshOutputs(entry.s, key);
+    const outs = availableOutputs(entry.s);
     const expandedNow = !!(outs && expandedOutputs.has(key));
     const subs = expandedNow ? renderOutputRows(outs, flash) : "";
     return sessionRow(entry.s, entry.m, flash, entry.kind, !!outs, expandedNow, key) + subs;
