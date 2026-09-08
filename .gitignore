@@ -1,0 +1,5 @@
+hs-pi-dashboard.exe
+hs-pi-dashboard
+dist/
+*.test
+coverage.out
