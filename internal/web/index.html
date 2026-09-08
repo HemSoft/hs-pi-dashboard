@@ -140,6 +140,9 @@
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden;
   }
   .session-table .out-age { color: var(--muted); font-size: 10.5px; padding-top: 1px; }
+  .session-table tr.toggleable { cursor: pointer; }
+  .session-table .out-chev { color: var(--muted); display: inline-block; width: 12px; }
+  .session-table tr.toggleable:hover .out-chev { color: var(--gold); }
   .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
@@ -473,19 +476,26 @@ const sessionSig = (s) => {
     (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
+// Sessions whose output rows are expanded (default: collapsed). Keys match
+// the row keys below, so the choice survives the 5s re-render.
+const expandedOutputs = new Set();
 
 // A session's recent visible agent text renders as extra rows under it —
-// up to 5, newest first, formatted as emitted (newlines and indentation
+// capped, newest first, formatted as emitted (newlines and indentation
 // kept; markdown stays literal). Tool calls and thinking never count. The
-// block only shows while the newest output is fresh; older sessions
-// collapse back to the plain row.
+// block shows only while the newest output is fresh, and only for sessions
+// the user expanded; stale keys fall back out of the expanded set.
 const FRESH_OUTPUT_MS = 10 * 60e3;
 
-function outputSubrows(s, flash) {
+function outputSubrows(s, flash, key) {
   const outs = s.outputs || [];
   if (!outs.length) return "";
   const age0 = Date.now() - new Date(outs[0].at).getTime();
-  if (!Number.isFinite(age0) || age0 < 0 || age0 > FRESH_OUTPUT_MS) return "";
+  if (!Number.isFinite(age0) || age0 < 0 || age0 > FRESH_OUTPUT_MS) {
+    expandedOutputs.delete(key);
+    return "";
+  }
+  if (!expandedOutputs.has(key)) return "";
   return outs.map((o, i) => {
     const age = Date.now() - new Date(o.at).getTime();
     if (!Number.isFinite(age) || age < 0) return "";
@@ -539,8 +549,8 @@ function sessionsTable(machines, hermesSessions) {
   const rows = flat.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
-    const subs = outputSubrows(entry.s, flash);
-    return sessionRow(entry.s, entry.m, flash, entry.kind, !!subs) + subs;
+    const subs = outputSubrows(entry.s, flash, key);
+    return sessionRow(entry.s, entry.m, flash, entry.kind, !!subs, key, expandedOutputs.has(key)) + subs;
   });
   lastSigs = newSigs;
   const nothing = !flat.length;
@@ -561,7 +571,7 @@ function sessionsTable(machines, hermesSessions) {
   </div>`;
 }
 
-function sessionRow(s, m, flash, kind, hasSub) {
+function sessionRow(s, m, flash, kind, hasSub, key, expanded) {
   const live = kind === "pi" ? (s.active && m.online) : s.active;
   const session = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   const provider = s.provider || "";
@@ -573,11 +583,12 @@ function sessionRow(s, m, flash, kind, hasSub) {
   const started = s.startedAt ? compactDur(Date.now() - new Date(s.startedAt).getTime()) : "";
   const dur = durationOf(s);
   const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
-  const cls = (live ? "active" : "offline") + (flash ? " flash" : "") + (hasSub ? " has-sub" : "");
+  const cls = (live ? "active" : "offline") + (flash ? " flash" : "") + (hasSub ? " has-sub toggleable" : "");
+  const attrs = hasSub ? ` class="${cls}" data-skey="${esc(key)}"` : ` class="${cls}"`;
   return `
-  <tr class="${cls}">
+  <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${esc(session)}</td>
+    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${hasSub ? `<span class="out-chev">${expanded ? "▾" : "▸"}</span>` : ""}${esc(session)}</td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
@@ -586,6 +597,16 @@ function sessionRow(s, m, flash, kind, hasSub) {
     <td>${price}</td>
     <td>${esc(dur)}</td>
   </tr>`;
+}
+
+let lastHermes = [];
+
+// Full re-render from cached data; toggling a session calls this directly so
+// the click lands instantly instead of waiting for the next poll.
+function renderSessions() {
+  if (!lastFleet) return;
+  document.getElementById("app").innerHTML = sessionsTable(lastFleet.machines, lastHermes);
+  renderUsage(lastFleet);
 }
 
 async function tick() {
@@ -597,10 +618,9 @@ async function tick() {
     const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
-    const hermes = hermesRes && hermesRes.ok ? (await hermesRes.json()).sessions || [] : [];
-    document.getElementById("app").innerHTML = sessionsTable(fleet.machines, hermes);
+    lastHermes = hermesRes && hermesRes.ok ? (await hermesRes.json()).sessions || [] : [];
     lastFleet = fleet;
-    renderUsage(fleet);
+    renderSessions();
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   }
@@ -610,6 +630,16 @@ tick();
 setInterval(tick, 5000);
 initUsageToggle();
 bindUsageCardToggles();
+// Clicking a session row with fresh output toggles its detail rows; state
+// lives in expandedOutputs so it survives the 5s re-render.
+document.getElementById("app").addEventListener("click", (e) => {
+  const row = e.target.closest("tr[data-skey]");
+  if (!row) return;
+  const key = row.dataset.skey;
+  if (expandedOutputs.has(key)) expandedOutputs.delete(key);
+  else expandedOutputs.add(key);
+  renderSessions();
+});
 </script>
 </body>
 </html>
