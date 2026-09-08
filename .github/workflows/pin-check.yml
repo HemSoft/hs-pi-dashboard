@@ -1,0 +1,26 @@
+name: pin-check
+
+# ci.yml pins actions by SHA. GitHub resolves those pins before any step of
+# ci.yml runs, so a mistyped SHA there fails every job with
+# "unable to find version <sha>" and ci.yml can never guard itself.
+# This workflow has no logic of its own to break: it checks out the repo and
+# verifies every pin in ci.yml against the real upstream tag SHA.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'scripts/check-action-pins.sh'
+  workflow_dispatch:
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify action pins resolve upstream
+        run: bash scripts/check-action-pins.sh .github/workflows/ci.yml
