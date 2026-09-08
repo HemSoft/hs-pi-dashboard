@@ -342,7 +342,7 @@ function usageCard(card, machine) {
   }
 
   return `
-  <div class="ucard"${attrs}>
+  <div class="ucard ${collapsible ? "collapsible" : ""}"${attrs}>
     <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}
       ${chev}
     </div>
