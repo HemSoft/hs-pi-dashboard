@@ -38,8 +38,8 @@ type MachineState struct {
 
 // FleetSnapshot is the dashboard-facing aggregation of all machines.
 type FleetSnapshot struct {
-	GeneratedAt    time.Time       `json:"generatedAt"`
-	Machines       []MachineState  `json:"machines"`
+	GeneratedAt    time.Time        `json:"generatedAt"`
+	Machines       []MachineState   `json:"machines"`
 	HermesSessions []hermes.Session `json:"hermesSessions"`
 }
 
@@ -136,7 +136,7 @@ func (s *Server) Run(addr string) error {
 	// Hermes sessions come from ~/.hermes/state.db on the same machine the
 	// serve runs on; an absent DB just renders nothing.
 	mux.HandleFunc("GET /api/hermes-sessions", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, hermes.Default().Snapshot(50))
+		writeJSON(w, http.StatusOK, hermes.Default().Snapshot(20))
 	})
 
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -241,7 +241,7 @@ func (s *Server) cachedFleet() FleetSnapshot {
 	return FleetSnapshot{
 		GeneratedAt:    time.Now(),
 		Machines:       machines,
-		HermesSessions: hermes.Default().List(50),
+		HermesSessions: hermes.Default().List(20),
 	}
 }
 

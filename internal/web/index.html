@@ -143,6 +143,11 @@
   .session-table tr.toggleable { cursor: pointer; }
   .session-table .out-chev { color: var(--muted); display: inline-block; width: 12px; }
   .session-table tr.toggleable:hover .out-chev { color: var(--gold); }
+  .pager { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+  .pager-btn { background: var(--card); border: 1px solid var(--card-border); color: var(--gold-dim); border-radius: 3px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
+  .pager-btn:hover:not(:disabled) { color: var(--gold); border-color: var(--gold-dim); }
+  .pager-btn:disabled { opacity: .35; cursor: default; }
+  .pager-count { margin-left: auto; }
   .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
@@ -479,6 +484,9 @@ let lastSigs = {};
 // Sessions whose output rows are expanded (default: collapsed). Keys match
 // the row keys below, so the choice survives the 5s re-render.
 const expandedOutputs = new Set();
+// Table paging: 20 sessions per page; state survives the 5s re-render.
+const PAGE_SIZE = 20;
+let currentPage = 1;
 
 // A session's recent visible agent text renders as extra rows under it —
 // capped, newest first, formatted as emitted (newlines and indentation
@@ -550,7 +558,12 @@ function sessionsTable(machines, hermesSessions) {
     if (aActive !== bActive) return bActive - aActive;
     return new Date(b.s.lastActivity || 0) - new Date(a.s.lastActivity || 0);
   });
-  const rows = flat.map((entry) => {
+  // Page over the merged, sorted list. The flash signature map above still
+  // covers every session, so switching pages never mass-flashes.
+  const totalPages = Math.max(1, Math.ceil(flat.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const pageItems = flat.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const rows = pageItems.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
     const outs = freshOutputs(entry.s, key);
@@ -564,7 +577,15 @@ function sessionsTable(machines, hermesSessions) {
   // host, its rows arrive via the Hermes feed; keep the whole machine visible
   // rather than silently hiding it.
   const body = nothing ? `<tr class="empty-row"><td colspan="9">no machines configured</td></tr>` : rows.join("");
+  const pager = totalPages > 1 ? `
+  <div class="pager">
+    <button class="pager-btn" data-page="prev" ${currentPage <= 1 ? "disabled" : ""}>‹</button>
+    <span class="pager-info">page ${currentPage} / ${totalPages}</span>
+    <button class="pager-btn" data-page="next" ${currentPage >= totalPages ? "disabled" : ""}>›</button>
+    <span class="pager-count">${flat.length} sessions</span>
+  </div>` : "";
   return `
+  ${pager}
   <div class="session-table-wrap">
     <table class="session-table">
       <thead>
@@ -640,8 +661,16 @@ setInterval(tick, 5000);
 initUsageToggle();
 bindUsageCardToggles();
 // Clicking a session row with fresh output toggles its detail rows; state
-// lives in expandedOutputs so it survives the 5s re-render.
+// lives in expandedOutputs so it survives the 5s re-render. Pager buttons
+// share the same delegated listener.
 document.getElementById("app").addEventListener("click", (e) => {
+  const btn = e.target.closest(".pager-btn");
+  if (btn && !btn.disabled) {
+    if (btn.dataset.page === "prev") currentPage--;
+    if (btn.dataset.page === "next") currentPage++;
+    renderSessions();
+    return;
+  }
   const row = e.target.closest("tr[data-skey]");
   if (!row) return;
   const key = row.dataset.skey;

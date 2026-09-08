@@ -33,10 +33,10 @@ func TestServerAggregatesMachinesAndMarksOffline(t *testing.T) {
 		Machine:     "home",
 		GeneratedAt: time.Now(),
 		Sessions: []sessions.Summary{{
-			ID:        "abc",
-			Project:   "hs-tui-launcher",
-			Active:    true,
-			Model:     "gpt-6-astra",
+			ID:           "abc",
+			Project:      "hs-tui-launcher",
+			Active:       true,
+			Model:        "gpt-6-astra",
 			LastActivity: time.Now(),
 		}},
 	})

@@ -181,6 +181,26 @@ func TestPollCapsOutputs(t *testing.T) {
 	}
 }
 
+func TestPollCapsSessionsAt20(t *testing.T) {
+	dir := t.TempDir()
+	for i := 1; i <= 25; i++ {
+		writeSession(t, dir, fmt.Sprintf("s%02d.jsonl", i),
+			fmt.Sprintf(`{"type":"session","version":3,"id":"s%d","timestamp":"2026-09-07T12:%02d:00Z","cwd":"/repo%d"}`, i, i, i))
+	}
+	scanner := NewScanner(dir, 2*time.Minute)
+	snap := scanner.Poll()
+	if len(snap.Sessions) != 20 {
+		t.Fatalf("sessions = %d, want capped at 20", len(snap.Sessions))
+	}
+	// Newest first: s25 (12:25) leads, the five oldest are dropped.
+	if snap.Sessions[0].ID != "s25" {
+		t.Fatalf("newest session = %q, want s25", snap.Sessions[0].ID)
+	}
+	if snap.Sessions[19].ID != "s6" {
+		t.Fatalf("oldest kept = %q, want s6", snap.Sessions[19].ID)
+	}
+}
+
 func TestPollMarksActivityWindow(t *testing.T) {
 	dir := t.TempDir()
 	writeSession(t, dir, "s.jsonl",

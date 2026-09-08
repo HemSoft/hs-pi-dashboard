@@ -114,7 +114,7 @@ type jobsFile struct {
 // lock being momentarily held are all normal and not worth surfacing.
 func (p *Provider) List(limit int) []Session {
 	if limit <= 0 {
-		limit = 50
+		limit = 20
 	}
 	out := p.queryDB("default", p.mainDB, limit)
 	for _, entry := range p.profileDBs() {

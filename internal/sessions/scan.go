@@ -65,6 +65,11 @@ type Output struct {
 
 const maxOutputs = 2
 
+// maxReportedSessions caps the agent's /sessions payload: the dashboard
+// pages through the newest sessions, and older ones only cost poll and
+// transfer time.
+const maxReportedSessions = 20
+
 // Snapshot is what the agent endpoint returns for one machine.
 type Snapshot struct {
 	Machine     string    `json:"machine"`
@@ -134,6 +139,10 @@ func (s *Scanner) Poll() Snapshot {
 	sort.Slice(summaries, func(i, j int) bool {
 		return summaries[i].LastActivity.After(summaries[j].LastActivity)
 	})
+
+	if len(summaries) > maxReportedSessions {
+		summaries = summaries[:maxReportedSessions]
+	}
 
 	return Snapshot{
 		GeneratedAt: now,
