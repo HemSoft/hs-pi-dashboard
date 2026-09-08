@@ -64,6 +64,19 @@
   .balance .amount { color: var(--gold); font-size: 26px; font-weight: 600; }
   .balance .unit { color: var(--muted); font-size: 11px; }
   .usage-stale { color: var(--muted); font-size: 10px; }
+  .ucard.collapsible { cursor: pointer; user-select: none; }
+  .ucard.collapsible:hover { border-color: #3f3f3f; }
+  .ucard .chev { margin-left: auto; color: var(--muted); font-size: 10px; transition: transform .15s; }
+  .ucard.collapsed .chev { transform: rotate(-90deg); }
+  .ucard.collapsed { gap: 6px; padding: 10px 14px; }
+  .ucard.collapsed .gauges, .ucard.collapsed .balance { display: none; }
+  .ucard-compact { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ucard-compact .mini {
+    display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap;
+    font-size: 11.5px; color: var(--text);
+    background: #080808; border: 1px solid var(--card-border); border-radius: 3px; padding: 2px 7px;
+  }
+  .ucard-compact .mini .gproj { font-size: 10.5px; }
 
   .machine { margin-bottom: 28px; }
   .machine-head {
@@ -285,9 +298,18 @@ function gaugeSvg(g) {
   </div>`;
 }
 
-function usageCard(card) {
+function usageCard(card, machine) {
+  const collapsible = card.kind !== "unknown";
+  const collapsed = collapsible && cardCollapsed(machine, card.key);
+  const chev = collapsible
+    ? `<span class="chev" title="${collapsed ? "expand" : "collapse"}">▾</span>`
+    : "";
+  const age = card.fetchedAt ? `<span class="usage-stale" title="${esc(card.fetchedAt)}">· ${rel(card.fetchedAt)}</span>` : "";
+
   let body = "";
-  if (card.kind === "quota") {
+  if (collapsed) {
+    body = compactBody(card);
+  } else if (card.kind === "quota") {
     body = card.gauges?.length
       ? `<div class="gauges">${card.gauges.map(gaugeSvg).join("")}</div>`
       : `<span class="ucard-error">${esc(card.error || "no data")}</span>`;
@@ -298,12 +320,59 @@ function usageCard(card) {
   } else {
     body = `<span class="ucard-error">${esc(card.error || "no usage source yet")}</span>`;
   }
-  const age = card.fetchedAt ? `<span class="usage-stale" title="${esc(card.fetchedAt)}">· ${rel(card.fetchedAt)}</span>` : "";
+
+  const attrs = collapsible
+    ? ` role="button" tabindex="0" data-machine="${esc(machine)}" data-key="${esc(card.key)}" `
+      + `onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"`
+    : "";
   return `
-  <div class="ucard">
-    <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}</div>
+  <div class="ucard ${collapsible ? "collapsible" : ""} ${collapsed ? "collapsed" : ""}"${attrs}>
+    <div class="ucard-label" style="display:flex;justify-content:space-between;align-items:baseline">${esc(card.label)}${age}${chev}</div>
     ${body}
   </div>`;
+}
+
+// compactBody is the collapsed "numbers only" strip: colored used-percent
+// per window with its projection, or the prepaid balance.
+function compactBody(card) {
+  if (card.kind === "quota") {
+    const minis = (card.gauges || []).map((g) => {
+      const pct = Math.round(g.usedPercent);
+      const proj = g.projectedEnd != null
+        ? (() => {
+            const p = Math.round(g.projectedEnd);
+            return `<span class="gproj ${p > 100 ? "over" : ""}">⇗${p}%</span>`;
+          })()
+        : "";
+      return `<span class="mini"><b style="color:${usageColor(g.usedPercent)}">${pct}%</b> ${esc(g.label)}${proj}</span>`;
+    }).join("");
+    return `<div class="ucard-compact">${minis || `<span class="ucard-error">${esc(card.error || "no data")}</span>`}</div>`;
+  }
+  if (card.kind === "balance") {
+    return card.balanceUsd != null
+      ? `<div class="ucard-compact"><span class="mini"><b style="color:var(--gold)">$${card.balanceUsd.toFixed(2)}</b> left</span></div>`
+      : `<div class="ucard-compact"><span class="ucard-error">${esc(card.error || "unknown")}</span></div>`;
+  }
+  return `<span class="ucard-error">${esc(card.error || "")}</span>`;
+}
+
+let lastFleet = null;
+
+function cardCollapsed(machine, key) {
+  return localStorage.getItem("hs-pi-dashboard:card-collapsed:" + machine + ":" + key) === "1";
+}
+
+function toggleCard(machine, key) {
+  const storageKey = "hs-pi-dashboard:card-collapsed:" + machine + ":" + key;
+  localStorage.setItem(storageKey, cardCollapsed(machine, key) ? "0" : "1");
+  if (lastFleet) renderUsage(lastFleet);
+}
+
+function bindUsageCardToggles() {
+  document.getElementById("usage-body").addEventListener("click", (e) => {
+    const el = e.target.closest(".ucard.collapsible");
+    if (el) toggleCard(el.dataset.machine, el.dataset.key);
+  });
 }
 
 function renderUsage(fleet) {
@@ -321,7 +390,7 @@ function renderUsage(fleet) {
         (m) => `
       <div>
         ${showMachineLabels ? `<div class="usage-machine-label">${esc(m.name)}</div>` : ""}
-        <div class="usage-grid">${m.usage.cards.map(usageCard).join("")}</div>
+        <div class="usage-grid">${m.usage.cards.map((c) => usageCard(c, m.name)).join("")}</div>
       </div>`,
       )
       .join("") +
@@ -392,6 +461,7 @@ async function tick() {
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
     document.getElementById("app").innerHTML =
       fleet.machines.map(machineSection).join("") || '<p class="empty">no machines configured</p>';
+    lastFleet = fleet;
     renderUsage(fleet);
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
@@ -401,6 +471,7 @@ async function tick() {
 tick();
 setInterval(tick, 5000);
 initUsageToggle();
+bindUsageCardToggles();
 </script>
 </body>
 </html>
