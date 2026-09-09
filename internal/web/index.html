@@ -548,11 +548,13 @@ function sessionsTable(machines, hermesSessions) {
     if (aActive !== bActive) return bActive - aActive;
     return new Date(b.s.lastActivity || 0) - new Date(a.s.lastActivity || 0);
   });
-  // Page over the merged, sorted list. The flash signature map above still
-  // covers every session, so switching pages never mass-flashes.
-  const totalPages = Math.max(1, Math.ceil(flat.length / PAGE_SIZE));
+  // Quiet runs (no stored output) add no value here — drop them before
+  // paging. The flash signature map above still covers every session, so a
+  // quiet run that later speaks flashes when it first appears.
+  const visible = flat.filter((entry) => (entry.s.outputs || []).length > 0);
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
-  const pageItems = flat.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageItems = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const rows = pageItems.map((entry) => {
     const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
     const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
@@ -562,17 +564,18 @@ function sessionsTable(machines, hermesSessions) {
     return sessionRow(entry.s, entry.m, flash, entry.kind, !!outs, expandedNow, key) + subs;
   });
   lastSigs = newSigs;
-  const nothing = !flat.length;
-  // When a machine has no pi sessions to show but Hermes is present on the
-  // host, its rows arrive via the Hermes feed; keep the whole machine visible
-  // rather than silently hiding it.
-  const body = nothing ? `<tr class="empty-row"><td colspan="9">no machines configured</td></tr>` : rows.join("");
+  // Hermes rows arrive via the Hermes feed regardless of machine state, so
+  // the empty states below distinguish "nothing configured" from
+  // "configured, but nothing has spoken yet".
+  const body = flat.length === 0 ? `<tr class="empty-row"><td colspan="9">no machines configured</td></tr>`
+    : visible.length === 0 ? `<tr class="empty-row"><td colspan="9">no sessions with output yet</td></tr>`
+    : rows.join("");
   const pager = totalPages > 1 ? `
   <div class="pager">
     <button class="pager-btn" data-page="prev" ${currentPage <= 1 ? "disabled" : ""}>‹</button>
     <span class="pager-info">page ${currentPage} / ${totalPages}</span>
     <button class="pager-btn" data-page="next" ${currentPage >= totalPages ? "disabled" : ""}>›</button>
-    <span class="pager-count">${flat.length} sessions</span>
+    <span class="pager-count">${visible.length} sessions</span>
   </div>` : "";
   return `
   ${pager}
