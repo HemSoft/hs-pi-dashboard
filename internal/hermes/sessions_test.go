@@ -126,6 +126,16 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 	if got := p.ActiveCount(); got != 3 {
 		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
 	}
+	byID := map[string]Session{}
+	for _, session := range p.List(10) {
+		byID[session.ID] = session
+	}
+	if !byID["cron_a_1"].Active {
+		t.Fatal("recent unended session should render active")
+	}
+	if byID["cli_b_2"].Active || byID["cli_c_3"].Active {
+		t.Fatal("stale unended sessions should not render active")
+	}
 
 	db, err = sql.Open("sqlite", p.mainDB)
 	if err != nil {

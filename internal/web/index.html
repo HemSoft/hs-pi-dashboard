@@ -713,8 +713,8 @@ function sessionsTable(machines, hermesSessions) {
       outputTokens: s.outputTokens || 0,
       costUsd: s.estimatedCostUsd || 0,
       startedAt: s.startedAt,
-      lastActivity: s.endedAt || s.startedAt,
-      active: !s.endedAt,
+      lastActivity: s.lastActivity || s.endedAt || s.startedAt,
+      active: s.active === true,
       outputs: s.outputs || [],
     };
     newSigs["hermes/" + (s.id || "")] = sessionSig(entry);
@@ -812,14 +812,17 @@ function renderSessions() {
   renderUsage(lastFleet);
 }
 
+const POLL_TIMEOUT_MS = 4500;
 let tickInFlight = false;
 async function tick() {
   if (tickInFlight) return;
   tickInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
   try {
     const [fleetRes, hermesRes] = await Promise.all([
-      fetch("/api/fleet"),
-      fetch("/api/hermes-sessions").catch(() => null),
+      fetch("/api/fleet", { signal: controller.signal }),
+      fetch("/api/hermes-sessions", { signal: controller.signal }).catch(() => null),
     ]);
     const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
@@ -831,6 +834,7 @@ async function tick() {
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   } finally {
+    clearTimeout(timeout);
     tickInFlight = false;
   }
 }

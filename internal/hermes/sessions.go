@@ -44,7 +44,9 @@ type Session struct {
 	CacheReadTokens int64      `json:"cacheReadTokens"`
 	ReasoningTokens int64      `json:"reasoningTokens"`
 	StartedAt       time.Time  `json:"startedAt"`
+	LastActivity    time.Time  `json:"lastActivity"`
 	EndedAt         *time.Time `json:"endedAt,omitempty"`
+	Active          bool       `json:"active"`
 	EndReason       string     `json:"endReason,omitempty"`
 	EstimatedCost   float64    `json:"estimatedCostUsd"`
 	Title           string     `json:"title,omitempty"`
@@ -289,6 +291,7 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		        COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
 		        COALESCE(cache_read_tokens, 0), COALESCE(reasoning_tokens, 0),
 		        started_at,
+		        COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id), started_at),
 		        ended_at,
 		        COALESCE(end_reason, ''), COALESCE(estimated_cost_usd, 0),
 		        COALESCE(title, ''), COALESCE(cwd, '')
@@ -302,20 +305,23 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 	defer rows.Close()
 
 	var out []Session
+	activeCutoff := p.currentTime().Add(-hermesActiveWindow)
 	for rows.Next() {
 		var s Session
-		var started float64
+		var started, lastActivity float64
 		var endedNull sql.NullFloat64
 		if err := rows.Scan(
 			&s.ID, &s.Source, &s.Model, &s.BillingProvider,
 			&s.MessageCount, &s.ToolCallCount, &s.InputTokens, &s.OutputTokens,
 			&s.CacheReadTokens, &s.ReasoningTokens,
-			&started, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
+			&started, &lastActivity, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
 		); err != nil {
 			continue
 		}
 		s.Profile = profile
 		s.StartedAt = time.UnixMilli(int64(started * 1000))
+		s.LastActivity = time.UnixMilli(int64(lastActivity * 1000))
+		s.Active = !endedNull.Valid && !s.LastActivity.Before(activeCutoff)
 		if endedNull.Valid {
 			e := time.UnixMilli(int64(endedNull.Float64 * 1000))
 			s.EndedAt = &e
