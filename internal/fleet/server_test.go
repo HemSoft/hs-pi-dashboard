@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HemSoft/hs-pi-dashboard/internal/hermes"
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
 )
 
@@ -83,6 +84,52 @@ func TestServerAggregatesMachinesAndMarksOffline(t *testing.T) {
 	ghost := snap.Machines[1]
 	if ghost.Online || ghost.Error == "" {
 		t.Fatalf("ghost state = %+v", ghost)
+	}
+}
+
+func TestActiveSessionCount(t *testing.T) {
+	endedAt := time.Now()
+	machines := []MachineState{
+		{
+			Name:   "online",
+			Online: true,
+			Sessions: []sessions.Summary{
+				{ID: "pi-active", Active: true},
+				{ID: "pi-idle", Active: false},
+			},
+		},
+		{
+			Name:   "offline-with-stale-cache",
+			Online: false,
+			Sessions: []sessions.Summary{
+				{ID: "stale-active", Active: true},
+			},
+		},
+	}
+	hermesSessions := []hermes.Session{
+		{ID: "hermes-active"},
+		{ID: "hermes-ended", EndedAt: &endedAt},
+	}
+
+	if got := activeSessionCount(machines, hermesSessions); got != 2 {
+		t.Fatalf("activeSessionCount() = %d, want 2", got)
+	}
+}
+
+func TestRoutesServePinnedSmoothieChartsWithoutInternet(t *testing.T) {
+	server := NewServer([]Target{{Name: "test", URL: "http://127.0.0.1:1"}}, time.Second)
+	req := httptest.NewRequest(http.MethodGet, "/assets/smoothie-1.36.1.js", nil)
+	rec := httptest.NewRecorder()
+	server.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), "SmoothieChart") {
+		t.Fatal("embedded Smoothie Charts runtime was not served")
 	}
 }
 

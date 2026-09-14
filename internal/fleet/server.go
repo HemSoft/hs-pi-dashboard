@@ -41,6 +41,7 @@ type FleetSnapshot struct {
 	GeneratedAt    time.Time        `json:"generatedAt"`
 	Machines       []MachineState   `json:"machines"`
 	HermesSessions []hermes.Session `json:"hermesSessions"`
+	ActiveSessions int              `json:"activeSessions"`
 }
 
 // Server polls agents and serves /api/fleet plus the embedded UI.
@@ -124,23 +125,7 @@ func (s *Server) Run(addr string) error {
 		}
 	}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/fleet", s.handleFleet)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(web.Index)
-	})
-	// Hermes sessions come from ~/.hermes/state.db on the same machine the
-	// serve runs on; an absent DB just renders nothing.
-	mux.HandleFunc("GET /api/hermes-sessions", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, hermes.Default().Snapshot(20))
-	})
-
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("hs-pi-dashboard serve listening on %s (poll=%s, machines=%d)", addr, s.pollEvery, len(s.targets))
 	return srv.ListenAndServe()
 }
@@ -213,6 +198,30 @@ func (s *Server) mergeStale(state MachineState) MachineState {
 	return state
 }
 
+func (s *Server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/fleet", s.handleFleet)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("GET /assets/smoothie-1.36.1.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		_, _ = w.Write(web.SmoothieJS)
+	})
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(web.Index)
+	})
+	// Hermes sessions come from ~/.hermes/state.db on the same machine the
+	// server runs on; an absent DB just renders nothing.
+	mux.HandleFunc("GET /api/hermes-sessions", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, hermes.Default().Snapshot(20))
+	})
+	return mux
+}
+
 func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.cachedFleet())
 }
@@ -239,11 +248,35 @@ func (s *Server) cachedFleet() FleetSnapshot {
 		}
 		machines = append(machines, state)
 	}
+	hermesSessions := hermes.Default().List(20)
 	return FleetSnapshot{
 		GeneratedAt:    time.Now(),
 		Machines:       machines,
-		HermesSessions: hermes.Default().List(20),
+		HermesSessions: hermesSessions,
+		ActiveSessions: activeSessionCount(machines, hermesSessions),
 	}
+}
+
+// activeSessionCount returns live work only. An offline machine may retain its
+// last good session list, but those stale sessions must not reach the count.
+func activeSessionCount(machines []MachineState, hermesSessions []hermes.Session) int {
+	count := 0
+	for _, machine := range machines {
+		if !machine.Online {
+			continue
+		}
+		for _, session := range machine.Sessions {
+			if session.Active {
+				count++
+			}
+		}
+	}
+	for _, session := range hermesSessions {
+		if session.EndedAt == nil {
+			count++
+		}
+	}
+	return count
 }
 
 // pollUsage fetches every machine's /usage snapshot; failures keep the last

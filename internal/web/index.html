@@ -44,6 +44,35 @@
   .usage-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
   .usage-toggle .hint { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
   .usage-body.collapsed { display: none; }
+
+  .pulse-panel {
+    position: relative; overflow: hidden; min-height: 184px; margin-bottom: 18px;
+    background: #000603; border: 1px solid #123c24; border-radius: 4px;
+    box-shadow: inset 0 0 24px rgba(0, 255, 102, .06), 0 0 12px rgba(0, 255, 102, .04);
+  }
+  .pulse-readout {
+    position: absolute; z-index: 2; top: 12px; left: 14px;
+    display: flex; align-items: baseline; gap: 9px; pointer-events: none;
+    text-shadow: 0 0 8px rgba(50, 255, 126, .7);
+  }
+  .pulse-count { color: #32ff7e; font-size: 34px; font-weight: 700; line-height: 1; }
+  .pulse-label { color: #7ee8a6; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .pulse-screen { position: relative; height: 182px; }
+  .pulse-screen::after {
+    content: ""; position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 34px;
+    background: linear-gradient(90deg, transparent, rgba(50, 255, 126, .08), rgba(173, 255, 204, .16));
+    box-shadow: 7px 0 18px rgba(50, 255, 126, .22); pointer-events: none;
+  }
+  .pulse-canvas {
+    display: block; width: 100%; height: 182px;
+    filter: drop-shadow(0 0 4px rgba(50, 255, 126, .72));
+    -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%);
+    mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-canvas { filter: drop-shadow(0 0 2px rgba(50, 255, 126, .45)); }
+    .refresh .dot, .live { animation: none; }
+  }
   /* Usage cards are account-level (merged across agents) and laid out as
      masonry columns of equal width: the compact cards (single-gauge
      speedometers + balances) stack in the first column so the money cards
@@ -178,9 +207,27 @@
   </button>
   <div id="usage-body" class="usage-body"><p class="empty">loading usage…</p></div>
 </section>
+<section class="pulse-section">
+  <button id="pulse-toggle" class="usage-toggle" aria-expanded="true" aria-controls="pulse-body">
+    <span class="chev">▾</span> Pulse
+    <span class="hint">live agent sessions · recent activity trace</span>
+  </button>
+  <div id="pulse-body" class="usage-body" aria-labelledby="pulse-toggle">
+    <div class="pulse-panel">
+      <div class="pulse-readout">
+        <span id="pulse-count" class="pulse-count" aria-live="polite">0</span>
+        <span id="pulse-label" class="pulse-label">active sessions</span>
+      </div>
+      <div class="pulse-screen">
+        <canvas id="pulse-canvas" class="pulse-canvas" width="960" height="182" role="img" aria-label="0 active agent sessions"></canvas>
+      </div>
+    </div>
+  </div>
+</section>
 <main id="app"><p class="empty">loading fleet…</p></main>
 <footer>hs-pi-dashboard · <a href="/api/fleet">/api/fleet</a></footer>
 
+<script src="/assets/smoothie-1.36.1.js"></script>
 <script>
 const esc = (s) => (s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -423,6 +470,134 @@ function compactBody(card) {
 }
 
 let lastFleet = null;
+
+// --- fleet pulse -----------------------------------------------------------
+// Smoothie Charts keeps the trace moving between the dashboard's 5s polls.
+// The readout is the authoritative count. The PQRST-style trace beats while
+// any work is active and flatlines at zero, like the monitor this UI mimics.
+const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
+const PULSE_DELAY_MS = 700;
+const PULSE_SAMPLE_MS = 25;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let pulseChart = null;
+let pulseSeries = null;
+let pulseSampleTimer = null;
+let activePulseCount = 0;
+let pulseEpoch = Date.now();
+
+function pulseOpen() {
+  return document.getElementById("pulse-toggle").getAttribute("aria-expanded") === "true";
+}
+
+function renderStaticPulse() {
+  if (!pulseChart || !pulseOpen() || document.hidden) return;
+  pulseChart.resize();
+  pulseChart.render(document.getElementById("pulse-canvas"), Date.now() - PULSE_DELAY_MS);
+}
+
+function pulseWave(now) {
+  if (activePulseCount === 0) return 0;
+  // More concurrent sessions shorten the interval slightly without changing
+  // the count represented by the numeric readout.
+  const beatMs = Math.max(560, 1050 - Math.min(activePulseCount, 8) * 55);
+  const phase = ((now - pulseEpoch) % beatMs) / beatMs;
+  const gaussian = (center, width, height) =>
+    height * Math.exp(-0.5 * Math.pow((phase - center) / width, 2));
+  return 0.035
+    + gaussian(.13, .025, .08)  // P
+    + gaussian(.205, .010, -.18) // Q
+    + gaussian(.228, .008, 1)  // R
+    + gaussian(.255, .012, -.32) // S
+    + gaussian(.46, .055, .22); // T
+}
+
+function samplePulse() {
+  const now = Date.now();
+  pulseSeries.append(now, pulseWave(now));
+}
+
+function syncPulseMotion() {
+  if (!pulseChart) return;
+  const animate = pulseOpen() && !document.hidden && !reducedMotion.matches;
+  if (animate) {
+    pulseChart.start();
+    if (!pulseSampleTimer) {
+      samplePulse();
+      pulseSampleTimer = setInterval(samplePulse, PULSE_SAMPLE_MS);
+    }
+  } else {
+    pulseChart.stop();
+    if (pulseSampleTimer) {
+      clearInterval(pulseSampleTimer);
+      pulseSampleTimer = null;
+    }
+    if (reducedMotion.matches) {
+      pulseSeries.append(Date.now(), activePulseCount > 0 ? .35 : 0);
+    }
+    renderStaticPulse();
+  }
+}
+
+function initPulse() {
+  const canvas = document.getElementById("pulse-canvas");
+  const toggle = document.getElementById("pulse-toggle");
+  const body = document.getElementById("pulse-body");
+  pulseSeries = new TimeSeries();
+  pulseChart = new SmoothieChart({
+    responsive: true,
+    millisPerPixel: 50,
+    interpolation: "linear",
+    minValue: -.38,
+    maxValue: 1.12,
+    grid: {
+      fillStyle: "#000603",
+      strokeStyle: "rgba(50,255,126,.11)",
+      lineWidth: 1,
+      millisPerLine: 5000,
+      verticalSections: 4,
+      sharpLines: true,
+    },
+    labels: { disabled: true },
+  });
+  pulseChart.addTimeSeries(pulseSeries, {
+    strokeStyle: "#32ff7e",
+    lineWidth: 2.5,
+    interpolation: "linear",
+  });
+  pulseChart.streamTo(canvas, PULSE_DELAY_MS);
+
+  const apply = (open) => {
+    toggle.setAttribute("aria-expanded", String(open));
+    body.classList.toggle("collapsed", !open);
+    syncPulseMotion();
+  };
+  const saved = localStorage.getItem(PULSE_TOGGLE_KEY);
+  apply(saved === null ? true : saved === "true");
+  toggle.addEventListener("click", () => {
+    const open = !pulseOpen();
+    apply(open);
+    localStorage.setItem(PULSE_TOGGLE_KEY, String(open));
+  });
+  document.addEventListener("visibilitychange", syncPulseMotion);
+  reducedMotion.addEventListener?.("change", syncPulseMotion);
+}
+
+function updatePulse(fleet) {
+  if (!pulseSeries) return;
+  const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
+  if (count !== activePulseCount) pulseEpoch = Date.now();
+  activePulseCount = count;
+  const countEl = document.getElementById("pulse-count");
+  const labelEl = document.getElementById("pulse-label");
+  const canvas = document.getElementById("pulse-canvas");
+  countEl.textContent = String(count);
+  labelEl.textContent = count === 1 ? "active session" : "active sessions";
+  canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
+  if (reducedMotion.matches) {
+    pulseSeries.append(Date.now(), count > 0 ? .35 : 0);
+    renderStaticPulse();
+  }
+}
 
 function cardCollapsed(machine, key) {
   return localStorage.getItem("hs-pi-dashboard:card-collapsed:" + machine + ":" + key) === "1";
@@ -670,15 +845,17 @@ async function tick() {
     lastHermes = hermesRes && hermesRes.ok ? (await hermesRes.json()).sessions || [] : [];
     lastFleet = fleet;
     renderSessions();
+    updatePulse(fleet);
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   }
 }
 
-tick();
-setInterval(tick, 5000);
 initUsageToggle();
 bindUsageCardToggles();
+initPulse();
+tick();
+setInterval(tick, 5000);
 // Clicking a session row with fresh output toggles its detail rows; state
 // lives in expandedOutputs so it survives the 5s re-render. Pager buttons
 // share the same delegated listener.
