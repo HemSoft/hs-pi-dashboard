@@ -663,6 +663,11 @@ function initPulse() {
   const apply = (open) => {
     toggle.setAttribute("aria-expanded", String(open));
     body.classList.toggle("collapsed", !open);
+    if (open) {
+      pulseChart.resize();
+      syncPulseDelay();
+      updatePulseCursor(pulseValueAt(Date.now()));
+    }
     syncPulseMotion();
   };
   const saved = localStorage.getItem(PULSE_TOGGLE_KEY);
@@ -675,6 +680,7 @@ function initPulse() {
   document.addEventListener("visibilitychange", syncPulseMotion);
   reducedMotion.addEventListener?.("change", syncPulseMotion);
   window.addEventListener("resize", () => {
+    if (!pulseOpen()) return;
     pulseChart.resize();
     syncPulseDelay();
     updatePulseCursor(pulseValueAt(Date.now()));
