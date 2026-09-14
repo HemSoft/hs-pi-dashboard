@@ -157,6 +157,35 @@ func TestSnapshotExcludesStaleUnendedSessionsWithoutDroppingActiveRows(t *testin
 	}
 }
 
+func TestListKeepsOlderActiveSessionAheadOfNewerEndedHistory(t *testing.T) {
+	p := newTestProvider(t)
+	now := time.Now()
+	p.now = func() time.Time { return now }
+
+	db, err := sql.Open("sqlite", p.mainDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO sessions (id, source, started_at) VALUES ('active_old', 'cli', ?)`, float64(now.Add(-90*time.Second).UnixMilli())/1000); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 21 {
+		started := float64(now.Add(-time.Duration(i)*time.Second).UnixMilli()) / 1000
+		if _, err := db.Exec(`INSERT INTO sessions (id, source, started_at, ended_at) VALUES (?, 'cli', ?, ?)`, fmt.Sprintf("ended_%02d", i), started, started+.5); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot := p.Snapshot(20)
+	if len(snapshot.Sessions) != 20 || snapshot.ActiveSessions != 1 {
+		t.Fatalf("Snapshot(20) = %d rows, %d active; want 20 rows with one active", len(snapshot.Sessions), snapshot.ActiveSessions)
+	}
+	if snapshot.Sessions[0].ID != "active_old" || !snapshot.Sessions[0].Active {
+		t.Fatalf("first session = %+v, want older active session", snapshot.Sessions[0])
+	}
+}
+
 func TestListSurfacesRecentAssistantOutputs(t *testing.T) {
 	p := newTestProvider(t)
 	byID := map[string]Session{}

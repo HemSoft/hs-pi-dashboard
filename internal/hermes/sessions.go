@@ -307,8 +307,13 @@ func (p *Provider) queryDB(profile, dbPath string, limit int, activeCutoff time.
 		        COALESCE(title, ''), COALESCE(cwd, '')
 		 FROM sessions se
 		 WHERE ended_at IS NULL OR ended_at > strftime('%s','now') - 86400
-		 ORDER BY last_activity DESC
-		 LIMIT ?`, limit)
+		 ORDER BY CASE
+		            WHEN ended_at IS NULL
+		             AND COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id), started_at) >= ?
+		            THEN 0 ELSE 1
+		          END,
+		          last_activity DESC
+		 LIMIT ?`, float64(activeCutoff.UnixMilli())/1000, limit)
 	if err != nil {
 		return nil
 	}
