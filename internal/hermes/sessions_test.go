@@ -118,14 +118,14 @@ func TestSnapshotExcludesStaleUnendedSessionsWithoutDroppingActiveRows(t *testin
 		t.Fatal(err)
 	}
 
-	if got := len(p.List(1)); got != 3 {
-		t.Fatalf("len(List(1)) = %d, want all 3 active sessions", got)
+	if got := len(p.List(1)); got != 4 {
+		t.Fatalf("len(List(1)) = %d, want 3 active sessions plus 1 history row", got)
 	}
 	// cron_a_1 plus the two new rows are recent. cli_b_2 and cli_c_3 have no
 	// recent messages but also no ended_at, which reproduces old Hermes data.
 	snapshot := p.Snapshot(1)
-	if len(snapshot.Sessions) != 3 || snapshot.ActiveSessions != 3 {
-		t.Fatalf("Snapshot(1) = %d rows, %d active; want all 3 active rows", len(snapshot.Sessions), snapshot.ActiveSessions)
+	if len(snapshot.Sessions) != 4 || snapshot.ActiveSessions != 3 {
+		t.Fatalf("Snapshot(1) = %d rows, %d active; want 3 active rows plus 1 history row", len(snapshot.Sessions), snapshot.ActiveSessions)
 	}
 	if snapshot.Sessions[0].ID != "cron_a_1" {
 		t.Fatalf("Snapshot(1) session = %q, want most recently active cron_a_1", snapshot.Sessions[0].ID)
@@ -178,8 +178,8 @@ func TestListKeepsOlderActiveSessionAheadOfNewerEndedHistory(t *testing.T) {
 	}
 
 	snapshot := p.Snapshot(20)
-	if len(snapshot.Sessions) != 20 || snapshot.ActiveSessions != 1 {
-		t.Fatalf("Snapshot(20) = %d rows, %d active; want 20 rows with one active", len(snapshot.Sessions), snapshot.ActiveSessions)
+	if len(snapshot.Sessions) != 21 || snapshot.ActiveSessions != 1 {
+		t.Fatalf("Snapshot(20) = %d rows, %d active; want 1 active plus 20 history rows", len(snapshot.Sessions), snapshot.ActiveSessions)
 	}
 	if snapshot.Sessions[0].ID != "active_old" || !snapshot.Sessions[0].Active {
 		t.Fatalf("first session = %+v, want older active session", snapshot.Sessions[0])

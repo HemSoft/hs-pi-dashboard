@@ -150,11 +150,8 @@ func (s *Scanner) Poll() Snapshot {
 			activeSessions++
 		}
 	}
-	if len(summaries) > maxReportedSessions {
-		reportedSessions := maxReportedSessions
-		for reportedSessions < len(summaries) && summaries[reportedSessions].Active {
-			reportedSessions++
-		}
+	reportedSessions := activeSessions + maxReportedSessions
+	if len(summaries) > reportedSessions {
 		summaries = summaries[:reportedSessions]
 	}
 

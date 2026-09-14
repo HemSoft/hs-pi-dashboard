@@ -153,11 +153,12 @@ func (p *Provider) List(limit int) []Session {
 			}
 		}
 	}
-	if len(out) > limit {
-		reportedSessions := limit
-		for reportedSessions < len(out) && out[reportedSessions].Active {
-			reportedSessions++
-		}
+	activeSessions := 0
+	for activeSessions < len(out) && out[activeSessions].Active {
+		activeSessions++
+	}
+	reportedSessions := activeSessions + limit
+	if len(out) > reportedSessions {
 		out = out[:reportedSessions]
 	}
 	return p.withJobNames(out)

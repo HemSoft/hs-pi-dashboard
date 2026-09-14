@@ -222,17 +222,20 @@ func TestPollIncludesAllActiveSessionsBeyondHistoryCap(t *testing.T) {
 	for i := 1; i <= 25; i++ {
 		writeSession(t, dir, fmt.Sprintf("s%02d.jsonl", i),
 			fmt.Sprintf(`{"type":"session","version":3,"id":"s%d","timestamp":"2026-09-07T12:%02d:00Z","cwd":"/repo%d"}`, i, i, i))
+		writeSession(t, dir, fmt.Sprintf("old%02d.jsonl", i),
+			fmt.Sprintf(`{"type":"session","version":3,"id":"old%d","timestamp":"2026-09-07T10:%02d:00Z","cwd":"/old%d"}`, i, i, i))
 	}
 	scanner := NewScanner(dir, time.Hour)
 	scanner.now = func() time.Time {
 		return time.Date(2026, 9, 7, 12, 26, 0, 0, time.UTC)
 	}
 	snap := scanner.Poll()
-	if len(snap.Sessions) != 25 || snap.ActiveSessions != 25 {
-		t.Fatalf("snapshot = %d rows, %d active; want every one of 25 active sessions", len(snap.Sessions), snap.ActiveSessions)
+	if len(snap.Sessions) != 45 || snap.ActiveSessions != 25 {
+		t.Fatalf("snapshot = %d rows, %d active; want 25 active plus 20 history rows", len(snap.Sessions), snap.ActiveSessions)
 	}
-	if snap.Sessions[0].ID != "s25" || snap.Sessions[24].ID != "s1" {
-		t.Fatalf("session range = %q..%q, want s25..s1", snap.Sessions[0].ID, snap.Sessions[24].ID)
+	if snap.Sessions[0].ID != "s25" || snap.Sessions[24].ID != "s1" ||
+		snap.Sessions[25].ID != "old25" || snap.Sessions[44].ID != "old6" {
+		t.Fatalf("session boundaries = %q, %q, %q, %q", snap.Sessions[0].ID, snap.Sessions[24].ID, snap.Sessions[25].ID, snap.Sessions[44].ID)
 	}
 }
 
