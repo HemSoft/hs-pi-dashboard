@@ -41,8 +41,9 @@ active session remains in the row payload even beyond the inactive-history cap.
 Its green trace moves continuously to a live cursor at 75% of the monitor
 width, resting at the current active-session level while zero stays on the
 bottom baseline. When an active session row receives a meaningful update, the
-row flash and cursor fire together with a short beat above that resting level. Cached sessions from offline machines and stale
-Hermes rows without an end timestamp do not count. The browser pauses the sweep
+row flash and cursor fire together with a short beat above that resting level.
+Cached sessions from offline machines and stale Hermes rows without an end
+timestamp do not count. The browser pauses the sweep
 when Pulse is collapsed or the tab is hidden, and reduced-motion mode renders a
 static trace.
 
