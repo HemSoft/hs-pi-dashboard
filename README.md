@@ -20,10 +20,11 @@ coding-agent sessions across the Tailscale network. One Go binary, two modes:
 
 ## What it shows
 
-Per machine, per session card: project, first user prompt, model + thinking
-level, message count, token/cost totals, started/last-activity times, and a
-pulsing gold dot while the session is active (file written within the last 2
-minutes). Rebooted machines keep their last known sessions grayed out.
+The session table shows each machine, project, provider, model, thinking level,
+message count, cost, start time, and duration. Active sessions remain visible
+before they produce assistant text and flash when their state changes;
+completed sessions without output stay hidden. Rebooted machines keep their
+last known sessions grayed out.
 
 Above the session grid sits an expandable/collapsible **Usage & Balances**
 section with speedometer cards per provider: Codex (weekly window),
