@@ -522,7 +522,7 @@ function pulseOpen() {
 function pulseYRange(seriesMax = 0) {
   const safeMax = Math.max(
     PULSE_BASE_GRID_SECTIONS,
-    Math.ceil(Number.isFinite(seriesMax) ? seriesMax : 0),
+    Math.ceil(Number.isFinite(seriesMax) ? seriesMax : 0) + 1,
     Math.ceil(pulseScaleFloor),
   );
   pulseDisplayRange = { min: 0, max: safeMax };
@@ -660,7 +660,7 @@ function triggerActivityPulse(count) {
   const now = Date.now();
   pulseBaseline = count;
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE + 1;
-  pulseYRange(pulseScaleFloor);
+  pulseYRange(count + PULSE_BEAT_AMPLITUDE);
   const cursor = document.getElementById("pulse-cursor");
 
   if (reducedMotion.matches) {
@@ -746,7 +746,7 @@ function updatePulse(fleet) {
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
   pulseBaseline = count;
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
-  pulseYRange(pulseScaleFloor);
+  pulseYRange(count);
   const now = Date.now();
   if (reducedMotion.matches && pulseOpen() && !document.hidden) {
     samplePulse(now);
