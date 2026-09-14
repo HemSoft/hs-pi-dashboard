@@ -40,9 +40,9 @@ across the fleet. Pulse and the table use one fleet snapshot, and every counted
 active session remains in the row payload even beyond the inactive-history cap.
 Its green trace moves continuously to a live cursor at 75% of the monitor
 width, resting at the current active-session level while zero stays on the
-bottom baseline. The dot tracks the trace's rendered value and scale. Six
-horizontal grid lines cover the default range; activity above five adds denser
-sections. When an active session row receives a meaningful update, the
+bottom baseline. The dot tracks the trace's rendered value and scale. Each
+horizontal line is an integer session level from zero through five by default;
+the grid adds denser integer levels when a count or beat needs more headroom. When an active session row receives a meaningful update, the
 row flash and cursor fire together with a short beat above that resting level.
 Cached sessions from offline machines and stale Hermes rows without an end
 timestamp do not count. The browser pauses the sweep

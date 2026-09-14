@@ -520,8 +520,13 @@ function pulseOpen() {
 }
 
 function pulseYRange(seriesMax = 0) {
-  const safeMax = Math.max(1, Number.isFinite(seriesMax) ? seriesMax : 0, pulseScaleFloor);
-  pulseDisplayRange = { min: -safeMax * .025, max: safeMax * 1.12 };
+  const safeMax = Math.max(
+    PULSE_BASE_GRID_SECTIONS,
+    Math.ceil(Number.isFinite(seriesMax) ? seriesMax : 0),
+    Math.ceil(pulseScaleFloor),
+  );
+  pulseDisplayRange = { min: 0, max: safeMax };
+  if (pulseChart) pulseChart.options.grid.verticalSections = safeMax;
   return pulseDisplayRange;
 }
 
@@ -740,9 +745,6 @@ function initPulse() {
 function updatePulse(fleet) {
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
   pulseBaseline = count;
-  if (pulseChart) {
-    pulseChart.options.grid.verticalSections = Math.max(PULSE_BASE_GRID_SECTIONS, Math.ceil(count));
-  }
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
   pulseYRange(pulseScaleFloor);
   const now = Date.now();
