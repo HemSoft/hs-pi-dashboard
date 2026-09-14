@@ -217,7 +217,7 @@ func TestPollCapsOutputs(t *testing.T) {
 	}
 }
 
-func TestPollCapsSessionsAt20(t *testing.T) {
+func TestPollIncludesAllActiveSessionsBeyondHistoryCap(t *testing.T) {
 	dir := t.TempDir()
 	for i := 1; i <= 25; i++ {
 		writeSession(t, dir, fmt.Sprintf("s%02d.jsonl", i),
@@ -228,18 +228,30 @@ func TestPollCapsSessionsAt20(t *testing.T) {
 		return time.Date(2026, 9, 7, 12, 26, 0, 0, time.UTC)
 	}
 	snap := scanner.Poll()
-	if len(snap.Sessions) != 20 {
-		t.Fatalf("sessions = %d, want capped at 20", len(snap.Sessions))
+	if len(snap.Sessions) != 25 || snap.ActiveSessions != 25 {
+		t.Fatalf("snapshot = %d rows, %d active; want every one of 25 active sessions", len(snap.Sessions), snap.ActiveSessions)
 	}
-	// Newest first: s25 (12:25) leads, the five oldest are dropped.
-	if snap.Sessions[0].ID != "s25" {
-		t.Fatalf("newest session = %q, want s25", snap.Sessions[0].ID)
+	if snap.Sessions[0].ID != "s25" || snap.Sessions[24].ID != "s1" {
+		t.Fatalf("session range = %q..%q, want s25..s1", snap.Sessions[0].ID, snap.Sessions[24].ID)
 	}
-	if snap.Sessions[19].ID != "s6" {
-		t.Fatalf("oldest kept = %q, want s6", snap.Sessions[19].ID)
+}
+
+func TestPollCapsInactiveSessionHistoryAt20(t *testing.T) {
+	dir := t.TempDir()
+	for i := 1; i <= 25; i++ {
+		writeSession(t, dir, fmt.Sprintf("s%02d.jsonl", i),
+			fmt.Sprintf(`{"type":"session","version":3,"id":"s%d","timestamp":"2026-09-07T12:%02d:00Z","cwd":"/repo%d"}`, i, i, i))
 	}
-	if snap.ActiveSessions != 25 {
-		t.Fatalf("active sessions = %d, want uncapped count of 25", snap.ActiveSessions)
+	scanner := NewScanner(dir, time.Minute)
+	scanner.now = func() time.Time {
+		return time.Date(2026, 9, 7, 13, 0, 0, 0, time.UTC)
+	}
+	snap := scanner.Poll()
+	if len(snap.Sessions) != 20 || snap.ActiveSessions != 0 {
+		t.Fatalf("snapshot = %d rows, %d active; want 20 inactive history rows", len(snap.Sessions), snap.ActiveSessions)
+	}
+	if snap.Sessions[0].ID != "s25" || snap.Sessions[19].ID != "s6" {
+		t.Fatalf("session range = %q..%q, want s25..s6", snap.Sessions[0].ID, snap.Sessions[19].ID)
 	}
 }
 

@@ -90,10 +90,17 @@ func New() *Provider {
 
 // Snapshot returns the current session list.
 func (p *Provider) Snapshot(limit int) Snapshot {
+	sessions := p.List(limit)
+	activeSessions := 0
+	for _, session := range sessions {
+		if session.Active {
+			activeSessions++
+		}
+	}
 	return Snapshot{
 		GeneratedAt:    time.Now(),
-		Sessions:       p.List(limit),
-		ActiveSessions: p.ActiveCount(),
+		Sessions:       sessions,
+		ActiveSessions: activeSessions,
 	}
 }
 
@@ -117,42 +124,43 @@ type jobsFile struct {
 	} `json:"jobs"`
 }
 
-// List returns the most recently active sessions aggregated across the main
-// DB and all profile DBs, ordered by last activity and capped at limit.
+// List returns sessions aggregated across the main DB and all profile DBs.
+// Every active session is retained ahead of inactive history, which is capped
+// at limit.
 // Errors collapse to an empty list: Hermes upgrading, migrating, or the DB
 // lock being momentarily held are all normal and not worth surfacing.
 func (p *Provider) List(limit int) []Session {
 	if limit <= 0 {
 		limit = 20
 	}
-	out := p.queryDB("default", p.mainDB, limit)
-	for _, entry := range p.profileDBs() {
-		out = append(out, p.queryDB(entry.profile, entry.path, limit)...)
+	activeCutoff := p.currentTime().Add(-hermesActiveWindow)
+	cutoff := float64(activeCutoff.UnixMilli()) / 1000
+	query := func(profile, dbPath string) []Session {
+		// Reserve enough rows for every active session in addition to the
+		// inactive-history limit. The final aggregate applies the global cap.
+		return p.queryDB(profile, dbPath, limit+p.activeCountDB(dbPath, cutoff), activeCutoff)
 	}
-	// most recently active first
+	out := query("default", p.mainDB)
+	for _, entry := range p.profileDBs() {
+		out = append(out, query(entry.profile, entry.path)...)
+	}
+	// Active sessions first, then most recent activity.
 	for i := 0; i < len(out); i++ {
 		for j := i + 1; j < len(out); j++ {
-			if out[j].LastActivity.After(out[i].LastActivity) {
+			if out[j].Active && !out[i].Active ||
+				(out[j].Active == out[i].Active && out[j].LastActivity.After(out[i].LastActivity)) {
 				out[i], out[j] = out[j], out[i]
 			}
 		}
 	}
 	if len(out) > limit {
-		out = out[:limit]
+		reportedSessions := limit
+		for reportedSessions < len(out) && out[reportedSessions].Active {
+			reportedSessions++
+		}
+		out = out[:reportedSessions]
 	}
 	return p.withJobNames(out)
-}
-
-// ActiveCount returns recently active, unended sessions across the main and
-// profile databases. Older Hermes versions left ended_at empty after work had
-// finished, so ended_at alone cannot distinguish live work from stale rows.
-func (p *Provider) ActiveCount() int {
-	cutoff := float64(p.currentTime().Add(-hermesActiveWindow).UnixMilli()) / 1000
-	count := p.activeCountDB(p.mainDB, cutoff)
-	for _, entry := range p.profileDBs() {
-		count += p.activeCountDB(entry.path, cutoff)
-	}
-	return count
 }
 
 func (p *Provider) currentTime() time.Time {
@@ -277,7 +285,7 @@ func (p *Provider) profileDBs() []profileEntry {
 	return out
 }
 
-func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
+func (p *Provider) queryDB(profile, dbPath string, limit int, activeCutoff time.Time) []Session {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
@@ -307,7 +315,6 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 	defer rows.Close()
 
 	var out []Session
-	activeCutoff := p.currentTime().Add(-hermesActiveWindow)
 	for rows.Next() {
 		var s Session
 		var started, lastActivity float64

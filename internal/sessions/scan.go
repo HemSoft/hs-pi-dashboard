@@ -65,9 +65,9 @@ type Output struct {
 
 const maxOutputs = 2
 
-// maxReportedSessions caps the agent's /sessions payload: the dashboard
-// pages through the newest sessions, and older ones only cost poll and
-// transfer time.
+// maxReportedSessions caps inactive history in the agent's /sessions payload.
+// Active sessions always remain in the payload so every counted session has a
+// dashboard row.
 const maxReportedSessions = 20
 
 // Snapshot is what the agent endpoint returns for one machine.
@@ -138,6 +138,9 @@ func (s *Scanner) Poll() Snapshot {
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Active != summaries[j].Active {
+			return summaries[i].Active
+		}
 		return summaries[i].LastActivity.After(summaries[j].LastActivity)
 	})
 
@@ -148,7 +151,11 @@ func (s *Scanner) Poll() Snapshot {
 		}
 	}
 	if len(summaries) > maxReportedSessions {
-		summaries = summaries[:maxReportedSessions]
+		reportedSessions := maxReportedSessions
+		for reportedSessions < len(summaries) && summaries[reportedSessions].Active {
+			reportedSessions++
+		}
+		summaries = summaries[:reportedSessions]
 	}
 
 	return Snapshot{

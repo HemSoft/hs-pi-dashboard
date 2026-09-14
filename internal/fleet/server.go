@@ -259,13 +259,12 @@ func (s *Server) cachedFleet() FleetSnapshot {
 		}
 		machines = append(machines, state)
 	}
-	hermesProvider := hermes.Default()
-	hermesSessions := hermesProvider.List(20)
+	hermesSnapshot := hermes.Default().Snapshot(20)
 	return FleetSnapshot{
 		GeneratedAt:    time.Now(),
 		Machines:       machines,
-		HermesSessions: hermesSessions,
-		ActiveSessions: activeSessionCount(machines, hermesProvider.ActiveCount()),
+		HermesSessions: hermesSnapshot.Sessions,
+		ActiveSessions: activeSessionCount(machines, hermesSnapshot.ActiveSessions),
 	}
 }
 

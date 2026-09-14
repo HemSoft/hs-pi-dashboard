@@ -698,12 +698,13 @@ function updatePulse(fleet) {
   canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
 }
 
-function activePiSessionCount(fleet) {
-  return (fleet.machines || []).reduce((total, machine) => {
-    if (!machine.online) return total;
-    if (Number.isFinite(machine.activeSessions)) return total + machine.activeSessions;
-    return total + (machine.sessions || []).filter(session => session.active).length;
+function snapshotActiveSessionCount(fleet) {
+  const piSessions = (fleet.machines || []).reduce((count, machine) => {
+    if (!machine.online) return count;
+    return count + (machine.sessions || []).filter(session => session.active).length;
   }, 0);
+  const hermesSessions = (fleet.hermesSessions || []).filter(session => session.active).length;
+  return piSessions + hermesSessions;
 }
 
 function cardCollapsed(machine, key) {
@@ -971,43 +972,26 @@ let tickInFlight = false;
 async function tick() {
   if (tickInFlight) return;
   tickInFlight = true;
-  const fleetController = new AbortController();
-  const hermesController = new AbortController();
-  const fleetTimeout = setTimeout(() => fleetController.abort(), POLL_TIMEOUT_MS);
-  const hermesTimeout = setTimeout(() => hermesController.abort(), POLL_TIMEOUT_MS);
-  const hermesPayloadPromise = fetch("/api/hermes-sessions", { signal: hermesController.signal })
-    .then(response => response.ok ? response.json() : null)
-    .catch(() => null);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
   try {
-    const fleetRes = await fetch("/api/fleet", { signal: fleetController.signal });
+    const fleetRes = await fetch("/api/fleet", { signal: controller.signal });
     const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
-    lastFleet = fleet;
-    updatePulse(fleet);
+    lastFleet = {
+      ...fleet,
+      activeSessions: snapshotActiveSessionCount(fleet),
+    };
+    lastHermes = fleet.hermesSessions || [];
+    updatePulse(lastFleet);
     renderSessions();
-
-    const hermesPayload = await hermesPayloadPromise;
-    if (hermesPayload) {
-      lastHermes = hermesPayload.sessions || [];
-      const hermesActive = Number.isFinite(hermesPayload.activeSessions)
-        ? hermesPayload.activeSessions
-        : lastHermes.filter(session => session.active).length;
-      lastFleet = {
-        ...lastFleet,
-        activeSessions: activePiSessionCount(lastFleet) + hermesActive,
-      };
-      updatePulse(lastFleet);
-      renderSessions();
-    }
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   } finally {
     if (lastFleet) sessionBaselineReady = true;
-    clearTimeout(fleetTimeout);
-    clearTimeout(hermesTimeout);
-    fleetController.abort();
-    hermesController.abort();
+    clearTimeout(timeout);
+    controller.abort();
     tickInFlight = false;
   }
 }

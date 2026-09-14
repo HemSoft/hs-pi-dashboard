@@ -99,7 +99,7 @@ CREATE TABLE messages (
 	}
 }
 
-func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *testing.T) {
+func TestSnapshotExcludesStaleUnendedSessionsWithoutDroppingActiveRows(t *testing.T) {
 	p := newTestProvider(t)
 	p.now = func() time.Time { return time.Unix(1788883060, 0) }
 
@@ -118,17 +118,14 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 		t.Fatal(err)
 	}
 
-	if got := len(p.List(1)); got != 1 {
-		t.Fatalf("len(List(1)) = %d, want 1", got)
+	if got := len(p.List(1)); got != 3 {
+		t.Fatalf("len(List(1)) = %d, want all 3 active sessions", got)
 	}
 	// cron_a_1 plus the two new rows are recent. cli_b_2 and cli_c_3 have no
 	// recent messages but also no ended_at, which reproduces old Hermes data.
-	if got := p.ActiveCount(); got != 3 {
-		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
-	}
 	snapshot := p.Snapshot(1)
-	if len(snapshot.Sessions) != 1 || snapshot.ActiveSessions != 3 {
-		t.Fatalf("Snapshot(1) = %d rows, %d active; want 1 row, 3 active", len(snapshot.Sessions), snapshot.ActiveSessions)
+	if len(snapshot.Sessions) != 3 || snapshot.ActiveSessions != 3 {
+		t.Fatalf("Snapshot(1) = %d rows, %d active; want all 3 active rows", len(snapshot.Sessions), snapshot.ActiveSessions)
 	}
 	if snapshot.Sessions[0].ID != "cron_a_1" {
 		t.Fatalf("Snapshot(1) session = %q, want most recently active cron_a_1", snapshot.Sessions[0].ID)
@@ -155,8 +152,8 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ActiveCount(); got != 2 {
-		t.Fatalf("ActiveCount() after one recent session ended = %d, want 2", got)
+	if got := p.Snapshot(1).ActiveSessions; got != 2 {
+		t.Fatalf("Snapshot(1).ActiveSessions after one recent session ended = %d, want 2", got)
 	}
 }
 
