@@ -856,10 +856,12 @@ function sessionsTable(machines, hermesSessions) {
     const machineLabel = "mini (" + (profileAlias || "hermes") + ")";
     flat.push({ s: entry, m: { name: machineLabel, online: true }, kind: "hermes" });
   });
+  const entryIsLive = (entry) =>
+    entry.kind === "hermes" ? entry.s.active : (entry.s.active && entry.m.online);
   // Recency first: active sessions bubble ahead of idle.
   flat.sort((a, b) => {
-    const aActive = a.kind === "hermes" ? a.s.active : (a.s.active && a.m.online);
-    const bActive = b.kind === "hermes" ? b.s.active : (b.s.active && b.m.online);
+    const aActive = entryIsLive(a);
+    const bActive = entryIsLive(b);
     if (aActive !== bActive) return bActive - aActive;
     return new Date(b.s.lastActivity || 0) - new Date(a.s.lastActivity || 0);
   });
@@ -874,11 +876,13 @@ function sessionsTable(machines, hermesSessions) {
   for (const entry of flat) {
     const key = entryKey(entry);
     const changed = sessionBaselineReady && lastSigs[key] !== newSigs[key];
-    const live = entry.kind === "hermes" ? entry.s.active : (entry.s.active && entry.m.online);
     if (changed) flashingSessions.set(key, renderAt + ROW_FLASH_MS);
-    if (changed && live) activeFlashDetected = true;
+    if (changed && entryIsLive(entry)) activeFlashDetected = true;
   }
-  const visible = flat.filter((entry) => (entry.s.outputs || []).length > 0);
+  // Active work belongs in the table before it has produced assistant text.
+  // Completed quiet runs stay hidden, and rows without output have no chevron.
+  const visible = flat.filter((entry) =>
+    entryIsLive(entry) || (entry.s.outputs || []).length > 0);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
   const pageItems = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -898,7 +902,7 @@ function sessionsTable(machines, hermesSessions) {
   // the empty states below distinguish "nothing configured" from
   // "configured, but nothing has spoken yet".
   const body = flat.length === 0 ? `<tr class="empty-row"><td colspan="9">no machines configured</td></tr>`
-    : visible.length === 0 ? `<tr class="empty-row"><td colspan="9">no sessions with output yet</td></tr>`
+    : visible.length === 0 ? `<tr class="empty-row"><td colspan="9">no active sessions or sessions with output yet</td></tr>`
     : rows.join("");
   const pager = totalPages > 1 ? `
   <div class="pager">
