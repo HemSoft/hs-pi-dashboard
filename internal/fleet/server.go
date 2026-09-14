@@ -248,19 +248,20 @@ func (s *Server) cachedFleet() FleetSnapshot {
 		}
 		machines = append(machines, state)
 	}
-	hermesSessions := hermes.Default().List(20)
+	hermesProvider := hermes.Default()
+	hermesSessions := hermesProvider.List(20)
 	return FleetSnapshot{
 		GeneratedAt:    time.Now(),
 		Machines:       machines,
 		HermesSessions: hermesSessions,
-		ActiveSessions: activeSessionCount(machines, hermesSessions),
+		ActiveSessions: activeSessionCount(machines, hermesProvider.ActiveCount()),
 	}
 }
 
 // activeSessionCount returns live work only. An offline machine may retain its
 // last good session list, but those stale sessions must not reach the count.
-func activeSessionCount(machines []MachineState, hermesSessions []hermes.Session) int {
-	count := 0
+func activeSessionCount(machines []MachineState, activeHermesSessions int) int {
+	count := activeHermesSessions
 	for _, machine := range machines {
 		if !machine.Online {
 			continue
@@ -269,11 +270,6 @@ func activeSessionCount(machines []MachineState, hermesSessions []hermes.Session
 			if session.Active {
 				count++
 			}
-		}
-	}
-	for _, session := range hermesSessions {
-		if session.EndedAt == nil {
-			count++
 		}
 	}
 	return count

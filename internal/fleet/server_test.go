@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/HemSoft/hs-pi-dashboard/internal/hermes"
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
 )
 
@@ -88,7 +87,6 @@ func TestServerAggregatesMachinesAndMarksOffline(t *testing.T) {
 }
 
 func TestActiveSessionCount(t *testing.T) {
-	endedAt := time.Now()
 	machines := []MachineState{
 		{
 			Name:   "online",
@@ -106,12 +104,7 @@ func TestActiveSessionCount(t *testing.T) {
 			},
 		},
 	}
-	hermesSessions := []hermes.Session{
-		{ID: "hermes-active"},
-		{ID: "hermes-ended", EndedAt: &endedAt},
-	}
-
-	if got := activeSessionCount(machines, hermesSessions); got != 2 {
+	if got := activeSessionCount(machines, 1); got != 2 {
 		t.Fatalf("activeSessionCount() = %d, want 2", got)
 	}
 }

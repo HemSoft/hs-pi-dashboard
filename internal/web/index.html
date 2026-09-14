@@ -214,8 +214,8 @@
   </button>
   <div id="pulse-body" class="usage-body" aria-labelledby="pulse-toggle">
     <div class="pulse-panel">
-      <div class="pulse-readout">
-        <span id="pulse-count" class="pulse-count" aria-live="polite">0</span>
+      <div class="pulse-readout" aria-live="polite" aria-atomic="true">
+        <span id="pulse-count" class="pulse-count">0</span>
         <span id="pulse-label" class="pulse-label">active sessions</span>
       </div>
       <div class="pulse-screen">
@@ -492,7 +492,7 @@ function pulseOpen() {
 function renderStaticPulse() {
   if (!pulseChart || !pulseOpen() || document.hidden) return;
   pulseChart.resize();
-  pulseChart.render(document.getElementById("pulse-canvas"), Date.now() - PULSE_DELAY_MS);
+  pulseChart.render(document.getElementById("pulse-canvas"), Date.now());
 }
 
 function pulseWave(now) {
@@ -580,6 +580,9 @@ function initPulse() {
   });
   document.addEventListener("visibilitychange", syncPulseMotion);
   reducedMotion.addEventListener?.("change", syncPulseMotion);
+  window.addEventListener("resize", () => {
+    if (reducedMotion.matches) renderStaticPulse();
+  });
 }
 
 function updatePulse(fleet) {
