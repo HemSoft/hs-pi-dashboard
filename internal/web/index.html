@@ -503,7 +503,8 @@ const PULSE_SHAPE = [
 ];
 const PULSE_DURATION_MS = PULSE_SHAPE[PULSE_SHAPE.length - 1][0];
 const PULSE_BEAT_AMPLITUDE = 1;
-const PULSE_BASE_GRID_SECTIONS = 5;
+const PULSE_BASE_GRID_CEILING = 5;
+const PULSE_EDGE_PADDING_RATIO = .035;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
@@ -519,9 +520,27 @@ function pulseOpen() {
   return document.getElementById("pulse-toggle").getAttribute("aria-expanded") === "true";
 }
 
-function pulseYRange(seriesMax = 0) {
-  const safeMax = Math.max(1, Number.isFinite(seriesMax) ? seriesMax : 0, pulseScaleFloor);
-  pulseDisplayRange = { min: -safeMax * .025, max: safeMax * 1.12 };
+function pulseGridLines(ceiling) {
+  return Array.from({ length: ceiling + 1 }, (_, value) => ({
+    value,
+    color: "rgba(50,255,126,.11)",
+    lineWidth: 1,
+  }));
+}
+
+function pulseVisibleMax() {
+  return (pulseSeries?.data || []).reduce((max, point) => Math.max(max, point[1]), 0);
+}
+
+function pulseYRange() {
+  const ceiling = Math.max(
+    PULSE_BASE_GRID_CEILING,
+    Math.ceil(pulseVisibleMax()) + 1,
+    Math.ceil(pulseScaleFloor),
+  );
+  const padding = ceiling * PULSE_EDGE_PADDING_RATIO;
+  pulseDisplayRange = { min: -padding, max: ceiling + padding };
+  if (pulseChart) pulseChart.options.horizontalLines = pulseGridLines(ceiling);
   return pulseDisplayRange;
 }
 
@@ -654,8 +673,8 @@ function triggerActivityPulse(count) {
   if (!pulseSeries || !pulseOpen() || document.hidden || count <= 0) return;
   const now = Date.now();
   pulseBaseline = count;
-  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
-  pulseYRange(pulseScaleFloor);
+  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE + 1;
+  pulseYRange(count + PULSE_BEAT_AMPLITUDE);
   const cursor = document.getElementById("pulse-cursor");
 
   if (reducedMotion.matches) {
@@ -695,9 +714,11 @@ function initPulse() {
       strokeStyle: "rgba(50,255,126,.11)",
       lineWidth: 1,
       millisPerLine: 5000,
-      verticalSections: PULSE_BASE_GRID_SECTIONS,
+      verticalSections: 0,
+      borderVisible: false,
       sharpLines: true,
     },
+    horizontalLines: pulseGridLines(PULSE_BASE_GRID_CEILING),
     labels: { disabled: true },
   });
   pulseChart.addTimeSeries(pulseSeries, {
@@ -740,11 +761,8 @@ function initPulse() {
 function updatePulse(fleet) {
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
   pulseBaseline = count;
-  if (pulseChart) {
-    pulseChart.options.grid.verticalSections = Math.max(PULSE_BASE_GRID_SECTIONS, Math.ceil(count));
-  }
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
-  pulseYRange(pulseScaleFloor);
+  pulseYRange(count);
   const now = Date.now();
   if (reducedMotion.matches && pulseOpen() && !document.hidden) {
     samplePulse(now);
