@@ -134,6 +134,33 @@ func (p *Provider) List(limit int) []Session {
 	return p.withJobNames(out)
 }
 
+// ActiveCount returns every open session across the main and profile databases.
+// It is intentionally independent of List's dashboard display limit.
+func (p *Provider) ActiveCount() int {
+	count := p.activeCountDB(p.mainDB)
+	for _, entry := range p.profileDBs() {
+		count += p.activeCountDB(entry.path)
+	}
+	return count
+}
+
+func (p *Provider) activeCountDB(dbPath string) int {
+	if _, err := os.Stat(dbPath); err != nil {
+		return 0
+	}
+	db, err := sql.Open("sqlite", readOnlyDSN(dbPath))
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL`).Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
 // withJobNames derives a session Name from ~/.hermes/cron/jobs.json when the
 // ID matches a cron's stored pattern; falls back to Source+ID fragment.
 // Cron rows carry the pattern `cron_<jobid>_<timestamp>` where <jobid> is the
@@ -230,8 +257,7 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	dsn := "file:" + url.QueryEscape(dbPath) + "?mode=ro&_journal_mode=WAL"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", readOnlyDSN(dbPath))
 	if err != nil {
 		return nil
 	}
@@ -351,6 +377,14 @@ var (
 func Default() *Provider {
 	defaultOnce.Do(func() { defaultProvider = New() })
 	return defaultProvider
+}
+
+// readOnlyDSN escapes a local path for SQLite's file URI. QueryEscape uses "+"
+// for spaces, but SQLite file URIs require "%20" and otherwise look for the
+// wrong path.
+func readOnlyDSN(dbPath string) string {
+	escaped := strings.ReplaceAll(url.QueryEscape(dbPath), "+", "%20")
+	return "file:" + escaped + "?mode=ro&_journal_mode=WAL"
 }
 
 func expandTilde(path string) string {

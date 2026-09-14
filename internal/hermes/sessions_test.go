@@ -2,6 +2,7 @@ package hermes
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +14,10 @@ import (
 // no messages.
 func newTestProvider(t *testing.T) *Provider {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "Hermes data")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	dbPath := filepath.Join(dir, "state.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -91,6 +95,32 @@ CREATE TABLE messages (
 		mainDB:   dbPath,
 		profiles: filepath.Join(dir, "no-profiles"),
 		jobsJSON: filepath.Join(dir, "no-jobs.json"),
+	}
+}
+
+func TestActiveCountIsIndependentOfListLimit(t *testing.T) {
+	p := newTestProvider(t)
+
+	if got := len(p.List(1)); got != 1 {
+		t.Fatalf("len(List(1)) = %d, want 1", got)
+	}
+	if got := p.ActiveCount(); got != 3 {
+		t.Fatalf("ActiveCount() = %d, want all 3 open sessions", got)
+	}
+
+	db, err := sql.Open("sqlite", p.mainDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE sessions SET ended_at = ? WHERE id = ?`, time.Now().Unix(), "cli_b_2"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ActiveCount(); got != 2 {
+		t.Fatalf("ActiveCount() after one session ended = %d, want 2", got)
 	}
 }
 

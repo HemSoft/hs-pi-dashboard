@@ -86,6 +86,41 @@ func TestServerAggregatesMachinesAndMarksOffline(t *testing.T) {
 	}
 }
 
+func TestActiveSessionCount(t *testing.T) {
+	machines := []MachineState{
+		{
+			Name:           "online",
+			Online:         true,
+			ActiveSessions: 1,
+		},
+		{
+			Name:           "offline-with-stale-cache",
+			Online:         false,
+			ActiveSessions: 1,
+		},
+	}
+	if got := activeSessionCount(machines, 1); got != 2 {
+		t.Fatalf("activeSessionCount() = %d, want 2", got)
+	}
+}
+
+func TestRoutesServePinnedSmoothieChartsWithoutInternet(t *testing.T) {
+	server := NewServer([]Target{{Name: "test", URL: "http://127.0.0.1:1"}}, time.Second)
+	req := httptest.NewRequest(http.MethodGet, "/assets/smoothie-1.36.1.js", nil)
+	rec := httptest.NewRecorder()
+	server.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), "SmoothieChart") {
+		t.Fatal("embedded Smoothie Charts runtime was not served")
+	}
+}
+
 func TestServerKeepsStaleSessionsWhenAgentFails(t *testing.T) {
 	fail := false
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

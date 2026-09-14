@@ -72,10 +72,11 @@ const maxReportedSessions = 20
 
 // Snapshot is what the agent endpoint returns for one machine.
 type Snapshot struct {
-	Machine     string    `json:"machine"`
-	GeneratedAt time.Time `json:"generatedAt"`
-	SessionsDir string    `json:"sessionsDir"`
-	Sessions    []Summary `json:"sessions"`
+	Machine        string    `json:"machine"`
+	GeneratedAt    time.Time `json:"generatedAt"`
+	SessionsDir    string    `json:"sessionsDir"`
+	Sessions       []Summary `json:"sessions"`
+	ActiveSessions int       `json:"activeSessions"`
 }
 
 type fileState struct {
@@ -140,14 +141,21 @@ func (s *Scanner) Poll() Snapshot {
 		return summaries[i].LastActivity.After(summaries[j].LastActivity)
 	})
 
+	activeSessions := 0
+	for _, summary := range summaries {
+		if summary.Active {
+			activeSessions++
+		}
+	}
 	if len(summaries) > maxReportedSessions {
 		summaries = summaries[:maxReportedSessions]
 	}
 
 	return Snapshot{
-		GeneratedAt: now,
-		SessionsDir: s.dir,
-		Sessions:    summaries,
+		GeneratedAt:    now,
+		SessionsDir:    s.dir,
+		Sessions:       summaries,
+		ActiveSessions: activeSessions,
 	}
 }
 
