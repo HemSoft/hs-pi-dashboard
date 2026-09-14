@@ -126,6 +126,21 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 	if got := p.ActiveCount(); got != 3 {
 		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
 	}
+
+	db, err = sql.Open("sqlite", p.mainDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE sessions SET ended_at = ? WHERE id = ?`, p.now().Unix(), "active_0"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ActiveCount(); got != 2 {
+		t.Fatalf("ActiveCount() after one recent session ended = %d, want 2", got)
+	}
 }
 
 func TestListSurfacesRecentAssistantOutputs(t *testing.T) {

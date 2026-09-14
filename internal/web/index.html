@@ -478,6 +478,7 @@ let lastFleet = null;
 const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
 const PULSE_DELAY_MS = 700;
 const PULSE_HALF_WIDTH_MS = 180;
+const PULSE_HISTORY_MS = 2 * 60 * 1000;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
@@ -558,9 +559,13 @@ function updatePulse(fleet) {
   if (!pulseSeries) return;
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
   const sampledAt = Date.now();
-  pulseSeries.append(sampledAt - PULSE_HALF_WIDTH_MS, 0);
-  pulseSeries.append(sampledAt, count);
-  if (count > 0) pulseSeries.append(sampledAt + PULSE_HALF_WIDTH_MS, 0);
+  pulseSeries.dropOldData(sampledAt - PULSE_HISTORY_MS, 2);
+  const shouldSample = pulseOpen() && !document.hidden;
+  if (shouldSample) {
+    pulseSeries.append(sampledAt - PULSE_HALF_WIDTH_MS, 0);
+    pulseSeries.append(sampledAt, count);
+    if (count > 0) pulseSeries.append(sampledAt + PULSE_HALF_WIDTH_MS, 0);
+  }
 
   const countEl = document.getElementById("pulse-count");
   const labelEl = document.getElementById("pulse-label");
@@ -568,7 +573,7 @@ function updatePulse(fleet) {
   countEl.textContent = String(count);
   labelEl.textContent = count === 1 ? "active session" : "active sessions";
   canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
-  if (reducedMotion.matches) {
+  if (shouldSample && reducedMotion.matches) {
     renderStaticPulse(sampledAt + PULSE_DELAY_MS + PULSE_HALF_WIDTH_MS);
   }
 }
@@ -807,7 +812,10 @@ function renderSessions() {
   renderUsage(lastFleet);
 }
 
+let tickInFlight = false;
 async function tick() {
+  if (tickInFlight) return;
+  tickInFlight = true;
   try {
     const [fleetRes, hermesRes] = await Promise.all([
       fetch("/api/fleet"),
@@ -822,6 +830,8 @@ async function tick() {
     updatePulse(fleet);
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
+  } finally {
+    tickInFlight = false;
   }
 }
 
