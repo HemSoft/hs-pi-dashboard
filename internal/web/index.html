@@ -693,7 +693,13 @@ function updatePulse(fleet) {
   pulseBaseline = count;
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
   pulseYRange(pulseScaleFloor);
-  updatePulseCursor(pulseValueAt(Date.now()));
+  const now = Date.now();
+  if (reducedMotion.matches && pulseOpen() && !document.hidden) {
+    samplePulse(now);
+    renderStaticPulse(now);
+  } else {
+    updatePulseCursor(pulseValueAt(now));
+  }
   const countEl = document.getElementById("pulse-count");
   const labelEl = document.getElementById("pulse-label");
   const canvas = document.getElementById("pulse-canvas");
