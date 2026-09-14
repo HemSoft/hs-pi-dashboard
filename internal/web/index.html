@@ -713,7 +713,7 @@ function sessionsTable(machines, hermesSessions) {
       outputTokens: s.outputTokens || 0,
       costUsd: s.estimatedCostUsd || 0,
       startedAt: s.startedAt,
-      lastActivity: s.lastActivity || s.endedAt || s.startedAt,
+      lastActivity: s.endedAt || s.lastActivity || s.startedAt,
       active: s.active === true,
       outputs: s.outputs || [],
     };
@@ -827,7 +827,11 @@ async function tick() {
     const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
-    lastHermes = hermesRes && hermesRes.ok ? (await hermesRes.json()).sessions || [] : [];
+    let hermesPayload = null;
+    if (hermesRes && hermesRes.ok) {
+      hermesPayload = await hermesRes.json().catch(() => null);
+    }
+    lastHermes = hermesPayload ? hermesPayload.sessions || [] : [];
     lastFleet = fleet;
     renderSessions();
     updatePulse(fleet);
