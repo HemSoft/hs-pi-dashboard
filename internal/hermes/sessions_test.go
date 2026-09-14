@@ -99,7 +99,7 @@ CREATE TABLE messages (
 	}
 }
 
-func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *testing.T) {
+func TestSnapshotExcludesStaleUnendedSessionsWithoutDroppingActiveRows(t *testing.T) {
 	p := newTestProvider(t)
 	p.now = func() time.Time { return time.Unix(1788883060, 0) }
 
@@ -118,17 +118,14 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 		t.Fatal(err)
 	}
 
-	if got := len(p.List(1)); got != 1 {
-		t.Fatalf("len(List(1)) = %d, want 1", got)
+	if got := len(p.List(1)); got != 4 {
+		t.Fatalf("len(List(1)) = %d, want 3 active sessions plus 1 history row", got)
 	}
 	// cron_a_1 plus the two new rows are recent. cli_b_2 and cli_c_3 have no
 	// recent messages but also no ended_at, which reproduces old Hermes data.
-	if got := p.ActiveCount(); got != 3 {
-		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
-	}
 	snapshot := p.Snapshot(1)
-	if len(snapshot.Sessions) != 1 || snapshot.ActiveSessions != 3 {
-		t.Fatalf("Snapshot(1) = %d rows, %d active; want 1 row, 3 active", len(snapshot.Sessions), snapshot.ActiveSessions)
+	if len(snapshot.Sessions) != 4 || snapshot.ActiveSessions != 3 {
+		t.Fatalf("Snapshot(1) = %d rows, %d active; want 3 active rows plus 1 history row", len(snapshot.Sessions), snapshot.ActiveSessions)
 	}
 	if snapshot.Sessions[0].ID != "cron_a_1" {
 		t.Fatalf("Snapshot(1) session = %q, want most recently active cron_a_1", snapshot.Sessions[0].ID)
@@ -155,8 +152,37 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ActiveCount(); got != 2 {
-		t.Fatalf("ActiveCount() after one recent session ended = %d, want 2", got)
+	if got := p.Snapshot(1).ActiveSessions; got != 2 {
+		t.Fatalf("Snapshot(1).ActiveSessions after one recent session ended = %d, want 2", got)
+	}
+}
+
+func TestListKeepsOlderActiveSessionAheadOfNewerEndedHistory(t *testing.T) {
+	p := newTestProvider(t)
+	now := time.Now()
+	p.now = func() time.Time { return now }
+
+	db, err := sql.Open("sqlite", p.mainDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO sessions (id, source, started_at) VALUES ('active_old', 'cli', ?)`, float64(now.Add(-90*time.Second).UnixMilli())/1000); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 21 {
+		started := float64(now.Add(-time.Duration(i)*time.Second).UnixMilli()) / 1000
+		if _, err := db.Exec(`INSERT INTO sessions (id, source, started_at, ended_at) VALUES (?, 'cli', ?, ?)`, fmt.Sprintf("ended_%02d", i), started, started+.5); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot := p.Snapshot(20)
+	if len(snapshot.Sessions) != 21 || snapshot.ActiveSessions != 1 {
+		t.Fatalf("Snapshot(20) = %d rows, %d active; want 1 active plus 20 history rows", len(snapshot.Sessions), snapshot.ActiveSessions)
+	}
+	if snapshot.Sessions[0].ID != "active_old" || !snapshot.Sessions[0].Active {
+		t.Fatalf("first session = %+v, want older active session", snapshot.Sessions[0])
 	}
 }
 
