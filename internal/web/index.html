@@ -696,7 +696,9 @@ function updatePulse(fleet) {
   const now = Date.now();
   if (reducedMotion.matches && pulseOpen() && !document.hidden) {
     samplePulse(now);
-    renderStaticPulse(now);
+    // renderSessions runs next and may append a synchronized static beat.
+    // Paint on the next frame so that beat is not throttled behind this baseline.
+    requestAnimationFrame(() => renderStaticPulse());
   } else {
     updatePulseCursor(pulseValueAt(now));
   }
