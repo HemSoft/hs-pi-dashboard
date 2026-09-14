@@ -489,9 +489,9 @@ function compactBody(card) {
 let lastFleet = null;
 
 // --- fleet pulse -----------------------------------------------------------
-// The trace samples a baseline continuously so time visibly moves beneath the
-// live cursor. A meaningful update to an active row drives one short monitor
-// pulse whose peak is the current active-session total.
+// The trace samples the active-session count continuously so time visibly
+// moves beneath the live cursor. A meaningful update to an active row drives
+// one short monitor pulse above that resting level.
 const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
 const PULSE_CURSOR_RATIO = .75;
 const PULSE_MILLIS_PER_PIXEL = 20;
@@ -502,13 +502,14 @@ const PULSE_SHAPE = [
   [170, 1], [210, .08], [275, .22], [410, 0],
 ];
 const PULSE_DURATION_MS = PULSE_SHAPE[PULSE_SHAPE.length - 1][0];
+const PULSE_BEAT_AMPLITUDE = 1;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
 let pulseSampleTimer = null;
 let pulseStartedAt = null;
-let pulsePeak = 0;
-let pulseScaleFloor = 0;
+let pulseBaseline = 0;
+let pulseScaleFloor = 1;
 let pulseDisplayRange = { min: -.025, max: 1.12 };
 let pulseCursorBeatTimer = null;
 
@@ -539,21 +540,22 @@ function updatePulseCursor(value) {
 }
 
 function pulseValueAt(now) {
-  if (pulseStartedAt === null) return 0;
+  if (pulseStartedAt === null) return pulseBaseline;
   const elapsed = now - pulseStartedAt;
   if (elapsed < 0 || elapsed >= PULSE_DURATION_MS) {
     pulseStartedAt = null;
-    return 0;
+    return pulseBaseline;
   }
   for (let i = 1; i < PULSE_SHAPE.length; i++) {
     const [rightTime, rightValue] = PULSE_SHAPE[i];
     if (elapsed <= rightTime) {
       const [leftTime, leftValue] = PULSE_SHAPE[i - 1];
       const progress = (elapsed - leftTime) / (rightTime - leftTime);
-      return pulsePeak * (leftValue + (rightValue - leftValue) * progress);
+      const beat = leftValue + (rightValue - leftValue) * progress;
+      return pulseBaseline + PULSE_BEAT_AMPLITUDE * beat;
     }
   }
-  return 0;
+  return pulseBaseline;
 }
 
 function samplePulse(now = Date.now()) {
@@ -601,18 +603,18 @@ function syncPulseMotion() {
 function triggerActivityPulse(count) {
   if (!pulseSeries || !pulseOpen() || document.hidden || count <= 0) return;
   const now = Date.now();
-  pulsePeak = count;
-  pulseScaleFloor = count;
-  pulseYRange(count);
+  pulseBaseline = count;
+  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
+  pulseYRange(pulseScaleFloor);
   const cursor = document.getElementById("pulse-cursor");
 
   if (reducedMotion.matches) {
     for (const [offset, value] of PULSE_SHAPE) {
-      pulseSeries.append(now - PULSE_DURATION_MS + offset, count * value);
+      pulseSeries.append(now - PULSE_DURATION_MS + offset, pulseBaseline + PULSE_BEAT_AMPLITUDE * value);
     }
-    pulseSeries.append(now, 0);
+    pulseSeries.append(now, pulseBaseline);
     pulseSeries.dropOldData(now - PULSE_HISTORY_MS, 2);
-    updatePulseCursor(0);
+    updatePulseCursor(pulseBaseline);
     renderStaticPulse(now);
     return;
   }
@@ -688,8 +690,10 @@ function initPulse() {
 
 function updatePulse(fleet) {
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
-  pulseScaleFloor = count;
-  pulseYRange(count);
+  pulseBaseline = count;
+  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
+  pulseYRange(pulseScaleFloor);
+  updatePulseCursor(pulseValueAt(Date.now()));
   const countEl = document.getElementById("pulse-count");
   const labelEl = document.getElementById("pulse-label");
   const canvas = document.getElementById("pulse-canvas");
