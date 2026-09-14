@@ -34,11 +34,12 @@ agent refreshes usage
 every 60s (endpoint `GET /usage`), the server folds it into `/api/fleet`, and
 the gauges read `100 - used_percent` so full-bleed windows read zero.
 
-The expandable **Pulse** monitor counts active Pi and Hermes sessions across
-the fleet. It flatlines when no agents are working and draws a scrolling green
-PQRST-style trace while sessions are active. Cached sessions from offline
-machines do not count. The browser pauses the animation when Pulse is collapsed
-or the tab is hidden, and reduced-motion mode renders a static trace.
+The expandable **Pulse** monitor counts recently active Pi and Hermes sessions
+across the fleet. Each five-second refresh draws one green spike whose height
+matches the active total; zero active sessions produces a flatline. Cached
+sessions from offline machines and stale Hermes rows without an end timestamp
+do not count. The browser pauses the sweep when Pulse is collapsed or the tab
+is hidden, and reduced-motion mode renders a static trace.
 
 The agent only reads pi's session files — it never talks to a running pi
 process, so it works whether or not pi is currently open. v2 plans a real pi

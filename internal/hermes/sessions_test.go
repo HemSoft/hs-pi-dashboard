@@ -2,6 +2,7 @@ package hermes
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,29 +99,32 @@ CREATE TABLE messages (
 	}
 }
 
-func TestActiveCountIsIndependentOfListLimit(t *testing.T) {
+func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *testing.T) {
 	p := newTestProvider(t)
-
-	if got := len(p.List(1)); got != 1 {
-		t.Fatalf("len(List(1)) = %d, want 1", got)
-	}
-	if got := p.ActiveCount(); got != 3 {
-		t.Fatalf("ActiveCount() = %d, want all 3 open sessions", got)
-	}
+	p.now = func() time.Time { return time.Unix(1788883060, 0) }
 
 	db, err := sql.Open("sqlite", p.mainDB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE sessions SET ended_at = ? WHERE id = ?`, time.Now().Unix(), "cli_b_2"); err != nil {
-		db.Close()
-		t.Fatal(err)
+	for i, started := range []float64{1788883001, 1788883002} {
+		if _, err := db.Exec(`INSERT INTO sessions (id, source, started_at) VALUES (?, 'cli', ?)`,
+			fmt.Sprintf("active_%d", i), started); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.ActiveCount(); got != 2 {
-		t.Fatalf("ActiveCount() after one session ended = %d, want 2", got)
+
+	if got := len(p.List(1)); got != 1 {
+		t.Fatalf("len(List(1)) = %d, want 1", got)
+	}
+	// cron_a_1 plus the two new rows are recent. cli_b_2 and cli_c_3 have no
+	// recent messages but also no ended_at, which reproduces old Hermes data.
+	if got := p.ActiveCount(); got != 3 {
+		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
 	}
 }
 

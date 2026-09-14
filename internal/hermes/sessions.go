@@ -62,7 +62,10 @@ type Output struct {
 	At   time.Time `json:"at"`
 }
 
-const maxOutputs = 2
+const (
+	maxOutputs         = 2
+	hermesActiveWindow = 2 * time.Minute
+)
 
 // Provider scans the Hermes main DB plus every profile DB under the profiles
 // dir, keeping cron-job names in memory.
@@ -70,6 +73,7 @@ type Provider struct {
 	mainDB   string
 	profiles string
 	jobsJSON string
+	now      func() time.Time
 }
 
 // New returns a Provider for the default locations.
@@ -78,6 +82,7 @@ func New() *Provider {
 		mainDB:   expandTilde(defaultMainDB),
 		profiles: expandTilde(defaultProfilesDir),
 		jobsJSON: expandTilde(defaultJobsJSON),
+		now:      time.Now,
 	}
 }
 
@@ -134,17 +139,26 @@ func (p *Provider) List(limit int) []Session {
 	return p.withJobNames(out)
 }
 
-// ActiveCount returns every open session across the main and profile databases.
-// It is intentionally independent of List's dashboard display limit.
+// ActiveCount returns recently active, unended sessions across the main and
+// profile databases. Older Hermes versions left ended_at empty after work had
+// finished, so ended_at alone cannot distinguish live work from stale rows.
 func (p *Provider) ActiveCount() int {
-	count := p.activeCountDB(p.mainDB)
+	cutoff := float64(p.currentTime().Add(-hermesActiveWindow).UnixMilli()) / 1000
+	count := p.activeCountDB(p.mainDB, cutoff)
 	for _, entry := range p.profileDBs() {
-		count += p.activeCountDB(entry.path)
+		count += p.activeCountDB(entry.path, cutoff)
 	}
 	return count
 }
 
-func (p *Provider) activeCountDB(dbPath string) int {
+func (p *Provider) currentTime() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+func (p *Provider) activeCountDB(dbPath string, cutoff float64) int {
 	if _, err := os.Stat(dbPath); err != nil {
 		return 0
 	}
@@ -155,7 +169,13 @@ func (p *Provider) activeCountDB(dbPath string) int {
 	defer db.Close()
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*)
+		FROM sessions se
+		WHERE se.ended_at IS NULL
+		  AND COALESCE(
+		    (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id),
+		    se.started_at
+		  ) >= ?`, cutoff).Scan(&count); err != nil {
 		return 0
 	}
 	return count

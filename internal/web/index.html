@@ -210,7 +210,7 @@
 <section class="pulse-section">
   <button id="pulse-toggle" class="usage-toggle" aria-expanded="true" aria-controls="pulse-body">
     <span class="chev">▾</span> Pulse
-    <span class="hint">live agent sessions · recent activity trace</span>
+    <span class="hint">one spike per refresh · height = active total</span>
   </button>
   <div id="pulse-body" class="usage-body" aria-labelledby="pulse-toggle">
     <div class="pulse-panel">
@@ -472,68 +472,32 @@ function compactBody(card) {
 let lastFleet = null;
 
 // --- fleet pulse -----------------------------------------------------------
-// Smoothie Charts keeps the trace moving between the dashboard's 5s polls.
-// The readout is the authoritative count. The PQRST-style trace beats while
-// any work is active and flatlines at zero, like the monitor this UI mimics.
+// Each successful 5s fleet poll adds one real sample. A nonzero sample rises
+// from the baseline to the active-session total and returns to zero; no active
+// work means a true flatline rather than a synthetic heartbeat.
 const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
 const PULSE_DELAY_MS = 700;
-const PULSE_SAMPLE_MS = 25;
+const PULSE_HALF_WIDTH_MS = 180;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
-let pulseSampleTimer = null;
-let activePulseCount = 0;
-let pulseEpoch = Date.now();
 
 function pulseOpen() {
   return document.getElementById("pulse-toggle").getAttribute("aria-expanded") === "true";
 }
 
-function renderStaticPulse() {
+function renderStaticPulse(renderAt = Date.now()) {
   if (!pulseChart || !pulseOpen() || document.hidden) return;
   pulseChart.resize();
-  pulseChart.render(document.getElementById("pulse-canvas"), Date.now());
-}
-
-function pulseWave(now) {
-  if (activePulseCount === 0) return 0;
-  // More concurrent sessions shorten the interval slightly without changing
-  // the count represented by the numeric readout.
-  const beatMs = Math.max(560, 1050 - Math.min(activePulseCount, 8) * 55);
-  const phase = ((now - pulseEpoch) % beatMs) / beatMs;
-  const gaussian = (center, width, height) =>
-    height * Math.exp(-0.5 * Math.pow((phase - center) / width, 2));
-  return 0.035
-    + gaussian(.13, .025, .08)  // P
-    + gaussian(.205, .010, -.18) // Q
-    + gaussian(.228, .008, 1)  // R
-    + gaussian(.255, .012, -.32) // S
-    + gaussian(.46, .055, .22); // T
-}
-
-function samplePulse() {
-  const now = Date.now();
-  pulseSeries.append(now, pulseWave(now));
+  pulseChart.render(document.getElementById("pulse-canvas"), renderAt);
 }
 
 function syncPulseMotion() {
   if (!pulseChart) return;
   const animate = pulseOpen() && !document.hidden && !reducedMotion.matches;
-  if (animate) {
-    pulseChart.start();
-    if (!pulseSampleTimer) {
-      samplePulse();
-      pulseSampleTimer = setInterval(samplePulse, PULSE_SAMPLE_MS);
-    }
-  } else {
+  if (animate) pulseChart.start();
+  else {
     pulseChart.stop();
-    if (pulseSampleTimer) {
-      clearInterval(pulseSampleTimer);
-      pulseSampleTimer = null;
-    }
-    if (reducedMotion.matches) {
-      pulseSeries.append(Date.now(), activePulseCount > 0 ? .35 : 0);
-    }
     renderStaticPulse();
   }
 }
@@ -547,8 +511,13 @@ function initPulse() {
     responsive: true,
     millisPerPixel: 50,
     interpolation: "linear",
-    minValue: -.38,
-    maxValue: 1.12,
+    yRangeFunction: ({ max }) => {
+      const safeMax = Number.isFinite(max) ? max : 0;
+      return {
+        min: -Math.max(.1, safeMax * .06),
+        max: Math.max(1, safeMax * 1.12),
+      };
+    },
     grid: {
       fillStyle: "#000603",
       strokeStyle: "rgba(50,255,126,.11)",
@@ -588,8 +557,11 @@ function initPulse() {
 function updatePulse(fleet) {
   if (!pulseSeries) return;
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
-  if (count !== activePulseCount) pulseEpoch = Date.now();
-  activePulseCount = count;
+  const sampledAt = Date.now();
+  pulseSeries.append(sampledAt - PULSE_HALF_WIDTH_MS, 0);
+  pulseSeries.append(sampledAt, count);
+  if (count > 0) pulseSeries.append(sampledAt + PULSE_HALF_WIDTH_MS, 0);
+
   const countEl = document.getElementById("pulse-count");
   const labelEl = document.getElementById("pulse-label");
   const canvas = document.getElementById("pulse-canvas");
@@ -597,8 +569,7 @@ function updatePulse(fleet) {
   labelEl.textContent = count === 1 ? "active session" : "active sessions";
   canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
   if (reducedMotion.matches) {
-    pulseSeries.append(Date.now(), count > 0 ? .35 : 0);
-    renderStaticPulse();
+    renderStaticPulse(sampledAt + PULSE_DELAY_MS + PULSE_HALF_WIDTH_MS);
   }
 }
 
