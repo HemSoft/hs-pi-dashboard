@@ -780,11 +780,12 @@ function initUsageToggle() {
 const sessionSig = (s) => {
   const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
-    s.messageCount || 0, s.inputTokens || 0, s.outputTokens || 0,
-    +(s.costUsd || 0).toFixed(4), !!s.active,
+    s.messageCount || 0, s.toolCallCount || 0, s.inputTokens || 0, s.outputTokens || 0,
+    +(s.costUsd || 0).toFixed(4), !!s.active, s.lastActivity || "",
     (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
+let sessionBaselineReady = false;
 let activeFlashDetected = false;
 const flashingSessions = new Map();
 const ROW_FLASH_MS = 1200;
@@ -836,6 +837,7 @@ function sessionsTable(machines, hermesSessions) {
       model: s.model || "",
       thinkingLevel: "",
       messageCount: s.messageCount || 0,
+      toolCallCount: s.toolCallCount || 0,
       inputTokens: s.inputTokens || 0,
       outputTokens: s.outputTokens || 0,
       costUsd: s.estimatedCostUsd || 0,
@@ -865,7 +867,7 @@ function sessionsTable(machines, hermesSessions) {
   // active run can update while the operator is looking at another page.
   for (const entry of flat) {
     const key = entryKey(entry);
-    const changed = lastSigs[key] && lastSigs[key] !== newSigs[key];
+    const changed = sessionBaselineReady && lastSigs[key] !== newSigs[key];
     const live = entry.kind === "hermes" ? entry.s.active : (entry.s.active && entry.m.online);
     if (changed) flashingSessions.set(key, renderAt + ROW_FLASH_MS);
     if (changed && live) activeFlashDetected = true;
@@ -993,6 +995,7 @@ async function tick() {
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   } finally {
+    if (lastFleet) sessionBaselineReady = true;
     clearTimeout(fleetTimeout);
     clearTimeout(hermesTimeout);
     fleetController.abort();
