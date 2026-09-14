@@ -66,8 +66,6 @@
   .pulse-canvas {
     display: block; width: 100%; height: 182px;
     filter: drop-shadow(0 0 4px rgba(50, 255, 126, .72));
-    -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%, #000 76%, transparent 77%);
-    mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%, #000 76%, transparent 77%);
   }
   .pulse-cursor {
     position: absolute; z-index: 3; left: 75%; bottom: 9px; width: 10px; height: 10px;
@@ -496,7 +494,7 @@ let lastFleet = null;
 // pulse whose peak is the current active-session total.
 const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
 const PULSE_CURSOR_RATIO = .75;
-const PULSE_MILLIS_PER_PIXEL = 25;
+const PULSE_MILLIS_PER_PIXEL = 20;
 const PULSE_SAMPLE_MS = 33;
 const PULSE_HISTORY_MS = 2 * 60 * 1000;
 const PULSE_SHAPE = [
