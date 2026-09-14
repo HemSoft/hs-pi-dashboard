@@ -659,7 +659,7 @@ function triggerActivityPulse(count) {
   if (!pulseSeries || !pulseOpen() || document.hidden || count <= 0) return;
   const now = Date.now();
   pulseBaseline = count;
-  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
+  pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE + 1;
   pulseYRange(pulseScaleFloor);
   const cursor = document.getElementById("pulse-cursor");
 
