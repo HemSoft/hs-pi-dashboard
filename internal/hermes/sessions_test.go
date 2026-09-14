@@ -2,6 +2,7 @@ package hermes
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +14,10 @@ import (
 // no messages.
 func newTestProvider(t *testing.T) *Provider {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "Hermes data")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	dbPath := filepath.Join(dir, "state.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

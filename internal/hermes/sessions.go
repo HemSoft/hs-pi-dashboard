@@ -148,8 +148,7 @@ func (p *Provider) activeCountDB(dbPath string) int {
 	if _, err := os.Stat(dbPath); err != nil {
 		return 0
 	}
-	dsn := "file:" + url.QueryEscape(dbPath) + "?mode=ro&_journal_mode=WAL"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", readOnlyDSN(dbPath))
 	if err != nil {
 		return 0
 	}
@@ -258,8 +257,7 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	dsn := "file:" + url.QueryEscape(dbPath) + "?mode=ro&_journal_mode=WAL"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", readOnlyDSN(dbPath))
 	if err != nil {
 		return nil
 	}
@@ -379,6 +377,14 @@ var (
 func Default() *Provider {
 	defaultOnce.Do(func() { defaultProvider = New() })
 	return defaultProvider
+}
+
+// readOnlyDSN escapes a local path for SQLite's file URI. QueryEscape uses "+"
+// for spaces, but SQLite file URIs require "%20" and otherwise look for the
+// wrong path.
+func readOnlyDSN(dbPath string) string {
+	escaped := strings.ReplaceAll(url.QueryEscape(dbPath), "+", "%20")
+	return "file:" + escaped + "?mode=ro&_journal_mode=WAL"
 }
 
 func expandTilde(path string) string {

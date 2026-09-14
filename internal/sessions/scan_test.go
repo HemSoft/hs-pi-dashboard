@@ -223,7 +223,10 @@ func TestPollCapsSessionsAt20(t *testing.T) {
 		writeSession(t, dir, fmt.Sprintf("s%02d.jsonl", i),
 			fmt.Sprintf(`{"type":"session","version":3,"id":"s%d","timestamp":"2026-09-07T12:%02d:00Z","cwd":"/repo%d"}`, i, i, i))
 	}
-	scanner := NewScanner(dir, 2*time.Minute)
+	scanner := NewScanner(dir, time.Hour)
+	scanner.now = func() time.Time {
+		return time.Date(2026, 9, 7, 12, 26, 0, 0, time.UTC)
+	}
 	snap := scanner.Poll()
 	if len(snap.Sessions) != 20 {
 		t.Fatalf("sessions = %d, want capped at 20", len(snap.Sessions))
@@ -234,6 +237,9 @@ func TestPollCapsSessionsAt20(t *testing.T) {
 	}
 	if snap.Sessions[19].ID != "s6" {
 		t.Fatalf("oldest kept = %q, want s6", snap.Sessions[19].ID)
+	}
+	if snap.ActiveSessions != 25 {
+		t.Fatalf("active sessions = %d, want uncapped count of 25", snap.ActiveSessions)
 	}
 }
 

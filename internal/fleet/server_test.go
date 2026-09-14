@@ -89,19 +89,14 @@ func TestServerAggregatesMachinesAndMarksOffline(t *testing.T) {
 func TestActiveSessionCount(t *testing.T) {
 	machines := []MachineState{
 		{
-			Name:   "online",
-			Online: true,
-			Sessions: []sessions.Summary{
-				{ID: "pi-active", Active: true},
-				{ID: "pi-idle", Active: false},
-			},
+			Name:           "online",
+			Online:         true,
+			ActiveSessions: 1,
 		},
 		{
-			Name:   "offline-with-stale-cache",
-			Online: false,
-			Sessions: []sessions.Summary{
-				{ID: "stale-active", Active: true},
-			},
+			Name:           "offline-with-stale-cache",
+			Online:         false,
+			ActiveSessions: 1,
 		},
 	}
 	if got := activeSessionCount(machines, 1); got != 2 {

@@ -27,13 +27,14 @@ type Target struct {
 
 // MachineState is the aggregated view of one machine.
 type MachineState struct {
-	Name        string             `json:"name"`
-	URL         string             `json:"url"`
-	Online      bool               `json:"online"`
-	Error       string             `json:"error,omitempty"`
-	GeneratedAt time.Time          `json:"generatedAt"`
-	Sessions    []sessions.Summary `json:"sessions"`
-	Usage       *usage.Snapshot    `json:"usage,omitempty"`
+	Name           string             `json:"name"`
+	URL            string             `json:"url"`
+	Online         bool               `json:"online"`
+	Error          string             `json:"error,omitempty"`
+	GeneratedAt    time.Time          `json:"generatedAt"`
+	Sessions       []sessions.Summary `json:"sessions"`
+	ActiveSessions int                `json:"activeSessions"`
+	Usage          *usage.Snapshot    `json:"usage,omitempty"`
 }
 
 // FleetSnapshot is the dashboard-facing aggregation of all machines.
@@ -183,6 +184,16 @@ func (s *Server) fetch(ctx context.Context, t Target) MachineState {
 	state.Online = true
 	state.GeneratedAt = snap.GeneratedAt
 	state.Sessions = snap.Sessions
+	state.ActiveSessions = snap.ActiveSessions
+	// Agents deployed before activeSessions was added still report enough data
+	// for an accurate count up to their 20-row display cap.
+	if state.ActiveSessions == 0 {
+		for _, session := range state.Sessions {
+			if session.Active {
+				state.ActiveSessions++
+			}
+		}
+	}
 	return state
 }
 
@@ -266,11 +277,7 @@ func activeSessionCount(machines []MachineState, activeHermesSessions int) int {
 		if !machine.Online {
 			continue
 		}
-		for _, session := range machine.Sessions {
-			if session.Active {
-				count++
-			}
-		}
+		count += machine.ActiveSessions
 	}
 	return count
 }
