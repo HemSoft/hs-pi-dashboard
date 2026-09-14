@@ -503,10 +503,12 @@ const PULSE_SHAPE = [
 ];
 const PULSE_DURATION_MS = PULSE_SHAPE[PULSE_SHAPE.length - 1][0];
 const PULSE_BEAT_AMPLITUDE = 1;
+const PULSE_BASE_GRID_SECTIONS = 5;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
 let pulseSampleTimer = null;
+let pulseCursorFrame = null;
 let pulseStartedAt = null;
 let pulseBaseline = 0;
 let pulseScaleFloor = 1;
@@ -533,10 +535,56 @@ function syncPulseDelay() {
 function updatePulseCursor(value) {
   const cursor = document.getElementById("pulse-cursor");
   const screen = cursor.parentElement;
-  const range = pulseDisplayRange.max - pulseDisplayRange.min;
-  const ratio = range > 0 ? (value - pulseDisplayRange.min) / range : 0;
+  const renderedMin = pulseChart && Number.isFinite(pulseChart.currentVisMinValue)
+    ? pulseChart.currentVisMinValue
+    : pulseDisplayRange.min;
+  const renderedRange = pulseChart && Number.isFinite(pulseChart.currentValueRange) && pulseChart.currentValueRange > 0
+    ? pulseChart.currentValueRange
+    : pulseDisplayRange.max - pulseDisplayRange.min;
+  const ratio = renderedRange > 0 ? (value - renderedMin) / renderedRange : 0;
   const bottom = Math.max(6, Math.min(screen.clientHeight - 6, ratio * screen.clientHeight));
   cursor.style.bottom = `${bottom}px`;
+}
+
+function pulseSeriesValueAt(timestamp) {
+  const data = pulseSeries?.data || [];
+  if (!data.length) return pulseBaseline;
+  if (timestamp <= data[0][0]) return data[0][1];
+  for (let i = data.length - 1; i >= 0; i--) {
+    const [leftTime, leftValue] = data[i];
+    if (leftTime > timestamp) continue;
+    if (i === data.length - 1) return leftValue;
+    const [rightTime, rightValue] = data[i + 1];
+    const progress = (timestamp - leftTime) / (rightTime - leftTime);
+    return leftValue + (rightValue - leftValue) * progress;
+  }
+  return data[0][1];
+}
+
+function renderedPulseCursorValue() {
+  if (!pulseChart || !Number.isFinite(pulseChart.lastChartTimestamp)) {
+    return pulseValueAt(Date.now());
+  }
+  const canvas = document.getElementById("pulse-canvas");
+  const width = canvas.clientWidth || canvas.width;
+  const cursorTime = pulseChart.lastChartTimestamp
+    - width * PULSE_MILLIS_PER_PIXEL * (1 - PULSE_CURSOR_RATIO);
+  return pulseSeriesValueAt(cursorTime);
+}
+
+function startPulseCursorTracking() {
+  if (pulseCursorFrame !== null) return;
+  const track = () => {
+    updatePulseCursor(renderedPulseCursorValue());
+    pulseCursorFrame = requestAnimationFrame(track);
+  };
+  pulseCursorFrame = requestAnimationFrame(track);
+}
+
+function stopPulseCursorTracking() {
+  if (pulseCursorFrame === null) return;
+  cancelAnimationFrame(pulseCursorFrame);
+  pulseCursorFrame = null;
 }
 
 function pulseValueAt(now) {
@@ -563,7 +611,6 @@ function samplePulse(now = Date.now()) {
   const value = pulseValueAt(now);
   pulseSeries.append(now, value);
   pulseSeries.dropOldData(now - PULSE_HISTORY_MS, 2);
-  updatePulseCursor(value);
 }
 
 function startPulseSampling() {
@@ -583,7 +630,7 @@ function renderStaticPulse(renderAt = Date.now()) {
   pulseChart.resize();
   syncPulseDelay();
   pulseChart.render(document.getElementById("pulse-canvas"), renderAt);
-  updatePulseCursor(pulseValueAt(renderAt));
+  updatePulseCursor(renderedPulseCursorValue());
 }
 
 function syncPulseMotion() {
@@ -593,8 +640,10 @@ function syncPulseMotion() {
   if (animate) {
     pulseChart.start();
     startPulseSampling();
+    startPulseCursorTracking();
   } else {
     stopPulseSampling();
+    stopPulseCursorTracking();
     pulseChart.stop();
     if (visible) samplePulse();
     renderStaticPulse();
@@ -615,7 +664,6 @@ function triggerActivityPulse(count) {
     }
     pulseSeries.append(now, pulseBaseline);
     pulseSeries.dropOldData(now - PULSE_HISTORY_MS, 2);
-    updatePulseCursor(pulseBaseline);
     renderStaticPulse(now);
     return;
   }
@@ -647,7 +695,7 @@ function initPulse() {
       strokeStyle: "rgba(50,255,126,.11)",
       lineWidth: 1,
       millisPerLine: 5000,
-      verticalSections: 4,
+      verticalSections: PULSE_BASE_GRID_SECTIONS,
       sharpLines: true,
     },
     labels: { disabled: true },
@@ -692,6 +740,9 @@ function initPulse() {
 function updatePulse(fleet) {
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
   pulseBaseline = count;
+  if (pulseChart) {
+    pulseChart.options.grid.verticalSections = Math.max(PULSE_BASE_GRID_SECTIONS, Math.ceil(count));
+  }
   pulseScaleFloor = count + PULSE_BEAT_AMPLITUDE;
   pulseYRange(pulseScaleFloor);
   const now = Date.now();
