@@ -44,7 +44,9 @@ type Session struct {
 	CacheReadTokens int64      `json:"cacheReadTokens"`
 	ReasoningTokens int64      `json:"reasoningTokens"`
 	StartedAt       time.Time  `json:"startedAt"`
+	LastActivity    time.Time  `json:"lastActivity"`
 	EndedAt         *time.Time `json:"endedAt,omitempty"`
+	Active          bool       `json:"active"`
 	EndReason       string     `json:"endReason,omitempty"`
 	EstimatedCost   float64    `json:"estimatedCostUsd"`
 	Title           string     `json:"title,omitempty"`
@@ -62,7 +64,10 @@ type Output struct {
 	At   time.Time `json:"at"`
 }
 
-const maxOutputs = 2
+const (
+	maxOutputs         = 2
+	hermesActiveWindow = 2 * time.Minute
+)
 
 // Provider scans the Hermes main DB plus every profile DB under the profiles
 // dir, keeping cron-job names in memory.
@@ -70,6 +75,7 @@ type Provider struct {
 	mainDB   string
 	profiles string
 	jobsJSON string
+	now      func() time.Time
 }
 
 // New returns a Provider for the default locations.
@@ -78,6 +84,7 @@ func New() *Provider {
 		mainDB:   expandTilde(defaultMainDB),
 		profiles: expandTilde(defaultProfilesDir),
 		jobsJSON: expandTilde(defaultJobsJSON),
+		now:      time.Now,
 	}
 }
 
@@ -134,17 +141,26 @@ func (p *Provider) List(limit int) []Session {
 	return p.withJobNames(out)
 }
 
-// ActiveCount returns every open session across the main and profile databases.
-// It is intentionally independent of List's dashboard display limit.
+// ActiveCount returns recently active, unended sessions across the main and
+// profile databases. Older Hermes versions left ended_at empty after work had
+// finished, so ended_at alone cannot distinguish live work from stale rows.
 func (p *Provider) ActiveCount() int {
-	count := p.activeCountDB(p.mainDB)
+	cutoff := float64(p.currentTime().Add(-hermesActiveWindow).UnixMilli()) / 1000
+	count := p.activeCountDB(p.mainDB, cutoff)
 	for _, entry := range p.profileDBs() {
-		count += p.activeCountDB(entry.path)
+		count += p.activeCountDB(entry.path, cutoff)
 	}
 	return count
 }
 
-func (p *Provider) activeCountDB(dbPath string) int {
+func (p *Provider) currentTime() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+func (p *Provider) activeCountDB(dbPath string, cutoff float64) int {
 	if _, err := os.Stat(dbPath); err != nil {
 		return 0
 	}
@@ -155,7 +171,13 @@ func (p *Provider) activeCountDB(dbPath string) int {
 	defer db.Close()
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*)
+		FROM sessions se
+		WHERE se.ended_at IS NULL
+		  AND COALESCE(
+		    (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id),
+		    se.started_at
+		  ) >= ?`, cutoff).Scan(&count); err != nil {
 		return 0
 	}
 	return count
@@ -269,6 +291,7 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		        COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
 		        COALESCE(cache_read_tokens, 0), COALESCE(reasoning_tokens, 0),
 		        started_at,
+		        COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id), started_at),
 		        ended_at,
 		        COALESCE(end_reason, ''), COALESCE(estimated_cost_usd, 0),
 		        COALESCE(title, ''), COALESCE(cwd, '')
@@ -282,20 +305,23 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 	defer rows.Close()
 
 	var out []Session
+	activeCutoff := p.currentTime().Add(-hermesActiveWindow)
 	for rows.Next() {
 		var s Session
-		var started float64
+		var started, lastActivity float64
 		var endedNull sql.NullFloat64
 		if err := rows.Scan(
 			&s.ID, &s.Source, &s.Model, &s.BillingProvider,
 			&s.MessageCount, &s.ToolCallCount, &s.InputTokens, &s.OutputTokens,
 			&s.CacheReadTokens, &s.ReasoningTokens,
-			&started, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
+			&started, &lastActivity, &endedNull, &s.EndReason, &s.EstimatedCost, &s.Title, &s.Cwd,
 		); err != nil {
 			continue
 		}
 		s.Profile = profile
 		s.StartedAt = time.UnixMilli(int64(started * 1000))
+		s.LastActivity = time.UnixMilli(int64(lastActivity * 1000))
+		s.Active = !endedNull.Valid && !s.LastActivity.Before(activeCutoff)
 		if endedNull.Valid {
 			e := time.UnixMilli(int64(endedNull.Float64 * 1000))
 			s.EndedAt = &e
