@@ -91,15 +91,17 @@ func New() *Provider {
 // Snapshot returns the current session list.
 func (p *Provider) Snapshot(limit int) Snapshot {
 	return Snapshot{
-		GeneratedAt: time.Now(),
-		Sessions:    p.List(limit),
+		GeneratedAt:    time.Now(),
+		Sessions:       p.List(limit),
+		ActiveSessions: p.ActiveCount(),
 	}
 }
 
 // Snapshot is what /api/hermes-sessions serves.
 type Snapshot struct {
-	GeneratedAt time.Time `json:"generatedAt"`
-	Sessions    []Session `json:"sessions"`
+	GeneratedAt    time.Time `json:"generatedAt"`
+	Sessions       []Session `json:"sessions"`
+	ActiveSessions int       `json:"activeSessions"`
 }
 
 type profileEntry struct {
@@ -115,8 +117,8 @@ type jobsFile struct {
 	} `json:"jobs"`
 }
 
-// List returns the most recent sessions aggregated across the main DB and
-// all profile DBs, ordered by started_at(newest first) and capped at limit.
+// List returns the most recently active sessions aggregated across the main
+// DB and all profile DBs, ordered by last activity and capped at limit.
 // Errors collapse to an empty list: Hermes upgrading, migrating, or the DB
 // lock being momentarily held are all normal and not worth surfacing.
 func (p *Provider) List(limit int) []Session {
@@ -127,10 +129,10 @@ func (p *Provider) List(limit int) []Session {
 	for _, entry := range p.profileDBs() {
 		out = append(out, p.queryDB(entry.profile, entry.path, limit)...)
 	}
-	// newest first
+	// most recently active first
 	for i := 0; i < len(out); i++ {
 		for j := i + 1; j < len(out); j++ {
-			if out[j].StartedAt.After(out[i].StartedAt) {
+			if out[j].LastActivity.After(out[i].LastActivity) {
 				out[i], out[j] = out[j], out[i]
 			}
 		}
@@ -291,13 +293,13 @@ func (p *Provider) queryDB(profile, dbPath string, limit int) []Session {
 		        COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
 		        COALESCE(cache_read_tokens, 0), COALESCE(reasoning_tokens, 0),
 		        started_at,
-		        COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id), started_at),
+		        COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = se.id), started_at) AS last_activity,
 		        ended_at,
 		        COALESCE(end_reason, ''), COALESCE(estimated_cost_usd, 0),
 		        COALESCE(title, ''), COALESCE(cwd, '')
 		 FROM sessions se
 		 WHERE ended_at IS NULL OR ended_at > strftime('%s','now') - 86400
-		 ORDER BY started_at DESC
+		 ORDER BY last_activity DESC
 		 LIMIT ?`, limit)
 	if err != nil {
 		return nil

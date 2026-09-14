@@ -126,6 +126,13 @@ func TestActiveCountExcludesStaleUnendedSessionsWithoutApplyingListLimit(t *test
 	if got := p.ActiveCount(); got != 3 {
 		t.Fatalf("ActiveCount() = %d, want 3 recent unended sessions", got)
 	}
+	snapshot := p.Snapshot(1)
+	if len(snapshot.Sessions) != 1 || snapshot.ActiveSessions != 3 {
+		t.Fatalf("Snapshot(1) = %d rows, %d active; want 1 row, 3 active", len(snapshot.Sessions), snapshot.ActiveSessions)
+	}
+	if snapshot.Sessions[0].ID != "cron_a_1" {
+		t.Fatalf("Snapshot(1) session = %q, want most recently active cron_a_1", snapshot.Sessions[0].ID)
+	}
 	byID := map[string]Session{}
 	for _, session := range p.List(10) {
 		byID[session.ID] = session

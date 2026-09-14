@@ -59,18 +59,36 @@
   .pulse-label { color: #7ee8a6; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
   .pulse-screen { position: relative; height: 182px; }
   .pulse-screen::after {
-    content: ""; position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 34px;
-    background: linear-gradient(90deg, transparent, rgba(50, 255, 126, .08), rgba(173, 255, 204, .16));
-    box-shadow: 7px 0 18px rgba(50, 255, 126, .22); pointer-events: none;
+    content: ""; position: absolute; z-index: 1; top: 8px; bottom: 8px; left: 75%; width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(50, 255, 126, .2) 22%, rgba(50, 255, 126, .06) 78%, transparent);
+    box-shadow: 0 0 9px rgba(50, 255, 126, .16); pointer-events: none;
   }
   .pulse-canvas {
     display: block; width: 100%; height: 182px;
     filter: drop-shadow(0 0 4px rgba(50, 255, 126, .72));
-    -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%);
-    mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%);
+    -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%, #000 76%, transparent 77%);
+    mask-image: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,.75) 30%, #000 62%, #000 76%, transparent 77%);
+  }
+  .pulse-cursor {
+    position: absolute; z-index: 3; left: 75%; bottom: 9px; width: 10px; height: 10px;
+    border: 1px solid rgba(210, 255, 225, .9); border-radius: 50%; background: #32ff7e;
+    box-shadow: 0 0 5px #32ff7e, 0 0 13px rgba(50, 255, 126, .9), 0 0 25px rgba(50, 255, 126, .45);
+    transform: translate(-50%, 50%); transition: bottom 42ms linear; pointer-events: none;
+    animation: pulse-cursor-breathe 1.8s ease-in-out infinite;
+  }
+  .pulse-cursor.beat { animation: pulse-cursor-beat .52s ease-out; }
+  @keyframes pulse-cursor-breathe {
+    0%, 100% { box-shadow: 0 0 4px #32ff7e, 0 0 10px rgba(50, 255, 126, .65), 0 0 20px rgba(50, 255, 126, .28); }
+    50% { box-shadow: 0 0 7px #32ff7e, 0 0 17px rgba(50, 255, 126, .95), 0 0 29px rgba(50, 255, 126, .48); }
+  }
+  @keyframes pulse-cursor-beat {
+    0% { box-shadow: 0 0 5px #32ff7e, 0 0 12px rgba(50, 255, 126, .8); }
+    35% { box-shadow: 0 0 9px #b9ffd1, 0 0 23px #32ff7e, 0 0 42px rgba(50, 255, 126, .9); }
+    100% { box-shadow: 0 0 5px #32ff7e, 0 0 13px rgba(50, 255, 126, .75); }
   }
   @media (prefers-reduced-motion: reduce) {
     .pulse-canvas { filter: drop-shadow(0 0 2px rgba(50, 255, 126, .45)); }
+    .pulse-cursor, .pulse-cursor.beat { animation: none; transition: none; }
     .refresh .dot, .live { animation: none; }
   }
   /* Usage cards are account-level (merged across agents) and laid out as
@@ -210,7 +228,7 @@
 <section class="pulse-section">
   <button id="pulse-toggle" class="usage-toggle" aria-expanded="true" aria-controls="pulse-body">
     <span class="chev">▾</span> Pulse
-    <span class="hint">one spike per refresh · height = active total</span>
+    <span class="hint">live activity cursor · peak = active total</span>
   </button>
   <div id="pulse-body" class="usage-body" aria-labelledby="pulse-toggle">
     <div class="pulse-panel">
@@ -220,6 +238,7 @@
       </div>
       <div class="pulse-screen">
         <canvas id="pulse-canvas" class="pulse-canvas" width="960" height="182" role="img" aria-label="0 active agent sessions"></canvas>
+        <span id="pulse-cursor" class="pulse-cursor" aria-hidden="true"></span>
       </div>
     </div>
   </div>
@@ -472,36 +491,140 @@ function compactBody(card) {
 let lastFleet = null;
 
 // --- fleet pulse -----------------------------------------------------------
-// Each successful 5s fleet poll adds one real sample. A nonzero sample rises
-// from the baseline to the active-session total and returns to zero; no active
-// work means a true flatline rather than a synthetic heartbeat.
+// The trace samples a baseline continuously so time visibly moves beneath the
+// live cursor. A meaningful update to an active row drives one short monitor
+// pulse whose peak is the current active-session total.
 const PULSE_TOGGLE_KEY = "hs-pi-dashboard:pulse-open";
-const PULSE_DELAY_MS = 700;
-const PULSE_HALF_WIDTH_MS = 180;
+const PULSE_CURSOR_RATIO = .75;
+const PULSE_MILLIS_PER_PIXEL = 25;
+const PULSE_SAMPLE_MS = 33;
 const PULSE_HISTORY_MS = 2 * 60 * 1000;
+const PULSE_SHAPE = [
+  [0, 0], [35, .1], [58, 0], [92, 0], [125, 1],
+  [170, 1], [210, .08], [275, .22], [410, 0],
+];
+const PULSE_DURATION_MS = PULSE_SHAPE[PULSE_SHAPE.length - 1][0];
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let pulseChart = null;
 let pulseSeries = null;
+let pulseSampleTimer = null;
+let pulseStartedAt = null;
+let pulsePeak = 0;
+let pulseScaleFloor = 0;
+let pulseDisplayRange = { min: -.025, max: 1.12 };
+let pulseCursorBeatTimer = null;
 
 function pulseOpen() {
   return document.getElementById("pulse-toggle").getAttribute("aria-expanded") === "true";
 }
 
+function pulseYRange(seriesMax = 0) {
+  const safeMax = Math.max(1, Number.isFinite(seriesMax) ? seriesMax : 0, pulseScaleFloor);
+  pulseDisplayRange = { min: -safeMax * .025, max: safeMax * 1.12 };
+  return pulseDisplayRange;
+}
+
+function syncPulseDelay() {
+  if (!pulseChart) return;
+  const canvas = document.getElementById("pulse-canvas");
+  const width = canvas.clientWidth || canvas.width;
+  pulseChart.delay = -Math.round(width * PULSE_MILLIS_PER_PIXEL * (1 - PULSE_CURSOR_RATIO));
+}
+
+function updatePulseCursor(value) {
+  const cursor = document.getElementById("pulse-cursor");
+  const screen = cursor.parentElement;
+  const range = pulseDisplayRange.max - pulseDisplayRange.min;
+  const ratio = range > 0 ? (value - pulseDisplayRange.min) / range : 0;
+  const bottom = Math.max(6, Math.min(screen.clientHeight - 6, ratio * screen.clientHeight));
+  cursor.style.bottom = `${bottom}px`;
+}
+
+function pulseValueAt(now) {
+  if (pulseStartedAt === null) return 0;
+  const elapsed = now - pulseStartedAt;
+  if (elapsed < 0 || elapsed >= PULSE_DURATION_MS) {
+    pulseStartedAt = null;
+    return 0;
+  }
+  for (let i = 1; i < PULSE_SHAPE.length; i++) {
+    const [rightTime, rightValue] = PULSE_SHAPE[i];
+    if (elapsed <= rightTime) {
+      const [leftTime, leftValue] = PULSE_SHAPE[i - 1];
+      const progress = (elapsed - leftTime) / (rightTime - leftTime);
+      return pulsePeak * (leftValue + (rightValue - leftValue) * progress);
+    }
+  }
+  return 0;
+}
+
+function samplePulse(now = Date.now()) {
+  if (!pulseSeries) return;
+  const value = pulseValueAt(now);
+  pulseSeries.append(now, value);
+  pulseSeries.dropOldData(now - PULSE_HISTORY_MS, 2);
+  updatePulseCursor(value);
+}
+
+function startPulseSampling() {
+  if (pulseSampleTimer !== null) return;
+  samplePulse();
+  pulseSampleTimer = setInterval(samplePulse, PULSE_SAMPLE_MS);
+}
+
+function stopPulseSampling() {
+  if (pulseSampleTimer === null) return;
+  clearInterval(pulseSampleTimer);
+  pulseSampleTimer = null;
+}
+
 function renderStaticPulse(renderAt = Date.now()) {
   if (!pulseChart || !pulseOpen() || document.hidden) return;
   pulseChart.resize();
+  syncPulseDelay();
   pulseChart.render(document.getElementById("pulse-canvas"), renderAt);
 }
 
 function syncPulseMotion() {
   if (!pulseChart) return;
-  pulseChart.options.scaleSmoothing = reducedMotion.matches ? 1 : .125;
-  const animate = pulseOpen() && !document.hidden && !reducedMotion.matches;
-  if (animate) pulseChart.start();
-  else {
+  const visible = pulseOpen() && !document.hidden;
+  const animate = visible && !reducedMotion.matches;
+  if (animate) {
+    pulseChart.start();
+    startPulseSampling();
+  } else {
+    stopPulseSampling();
     pulseChart.stop();
+    if (visible) samplePulse();
     renderStaticPulse();
   }
+}
+
+function triggerActivityPulse(count) {
+  if (!pulseSeries || !pulseOpen() || document.hidden || count <= 0) return;
+  const now = Date.now();
+  pulsePeak = count;
+  pulseScaleFloor = count;
+  pulseYRange(count);
+  const cursor = document.getElementById("pulse-cursor");
+
+  if (reducedMotion.matches) {
+    for (const [offset, value] of PULSE_SHAPE) {
+      pulseSeries.append(now - PULSE_DURATION_MS + offset, count * value);
+    }
+    pulseSeries.append(now, 0);
+    pulseSeries.dropOldData(now - PULSE_HISTORY_MS, 2);
+    updatePulseCursor(0);
+    renderStaticPulse(now);
+    return;
+  }
+
+  pulseStartedAt = now;
+  cursor.classList.remove("beat");
+  void cursor.offsetWidth;
+  cursor.classList.add("beat");
+  clearTimeout(pulseCursorBeatTimer);
+  pulseCursorBeatTimer = setTimeout(() => cursor.classList.remove("beat"), 520);
 }
 
 function initPulse() {
@@ -509,17 +632,15 @@ function initPulse() {
   const toggle = document.getElementById("pulse-toggle");
   const body = document.getElementById("pulse-body");
   pulseSeries = new TimeSeries();
+  const initialSampleAt = Date.now();
+  pulseSeries.append(initialSampleAt - PULSE_HISTORY_MS, 0);
+  pulseSeries.append(initialSampleAt, 0);
   pulseChart = new SmoothieChart({
     responsive: true,
-    millisPerPixel: 50,
+    millisPerPixel: PULSE_MILLIS_PER_PIXEL,
     interpolation: "linear",
-    yRangeFunction: ({ max }) => {
-      const safeMax = Number.isFinite(max) ? max : 0;
-      return {
-        min: -Math.max(.1, safeMax * .06),
-        max: Math.max(1, safeMax * 1.12),
-      };
-    },
+    scaleSmoothing: 1,
+    yRangeFunction: ({ max }) => pulseYRange(max),
     grid: {
       fillStyle: "#000603",
       strokeStyle: "rgba(50,255,126,.11)",
@@ -535,11 +656,18 @@ function initPulse() {
     lineWidth: 2.5,
     interpolation: "linear",
   });
-  pulseChart.streamTo(canvas, PULSE_DELAY_MS);
+  pulseChart.streamTo(canvas, 0);
+  syncPulseDelay();
+  updatePulseCursor(0);
 
   const apply = (open) => {
     toggle.setAttribute("aria-expanded", String(open));
     body.classList.toggle("collapsed", !open);
+    if (open) {
+      pulseChart.resize();
+      syncPulseDelay();
+      updatePulseCursor(pulseValueAt(Date.now()));
+    }
     syncPulseMotion();
   };
   const saved = localStorage.getItem(PULSE_TOGGLE_KEY);
@@ -552,31 +680,32 @@ function initPulse() {
   document.addEventListener("visibilitychange", syncPulseMotion);
   reducedMotion.addEventListener?.("change", syncPulseMotion);
   window.addEventListener("resize", () => {
+    if (!pulseOpen()) return;
+    pulseChart.resize();
+    syncPulseDelay();
+    updatePulseCursor(pulseValueAt(Date.now()));
     if (reducedMotion.matches) renderStaticPulse();
   });
 }
 
 function updatePulse(fleet) {
-  if (!pulseSeries) return;
   const count = Number.isFinite(fleet.activeSessions) ? fleet.activeSessions : 0;
-  const sampledAt = Date.now();
-  pulseSeries.dropOldData(sampledAt - PULSE_HISTORY_MS, 2);
-  const shouldSample = pulseOpen() && !document.hidden;
-  if (shouldSample) {
-    pulseSeries.append(sampledAt - PULSE_HALF_WIDTH_MS, 0);
-    pulseSeries.append(sampledAt, count);
-    if (count > 0) pulseSeries.append(sampledAt + PULSE_HALF_WIDTH_MS, 0);
-  }
-
+  pulseScaleFloor = count;
+  pulseYRange(count);
   const countEl = document.getElementById("pulse-count");
   const labelEl = document.getElementById("pulse-label");
   const canvas = document.getElementById("pulse-canvas");
   countEl.textContent = String(count);
   labelEl.textContent = count === 1 ? "active session" : "active sessions";
   canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
-  if (shouldSample && reducedMotion.matches) {
-    renderStaticPulse(sampledAt + PULSE_DELAY_MS + PULSE_HALF_WIDTH_MS);
-  }
+}
+
+function activePiSessionCount(fleet) {
+  return (fleet.machines || []).reduce((total, machine) => {
+    if (!machine.online) return total;
+    if (Number.isFinite(machine.activeSessions)) return total + machine.activeSessions;
+    return total + (machine.sessions || []).filter(session => session.active).length;
+  }, 0);
 }
 
 function cardCollapsed(machine, key) {
@@ -657,11 +786,15 @@ function initUsageToggle() {
 const sessionSig = (s) => {
   const project = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
-    s.messageCount || 0, s.inputTokens || 0, s.outputTokens || 0,
-    +(s.costUsd || 0).toFixed(4), !!s.active,
+    s.messageCount || 0, s.toolCallCount || 0, s.inputTokens || 0, s.outputTokens || 0,
+    +(s.costUsd || 0).toFixed(4), !!s.active, s.lastActivity || "",
     (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
+let sessionBaselineReady = false;
+let activeFlashDetected = false;
+const flashingSessions = new Map();
+const ROW_FLASH_MS = 1200;
 // Sessions whose output rows are expanded (default: collapsed). Keys match
 // the row keys below, so the choice survives the 5s re-render.
 const expandedOutputs = new Set();
@@ -710,6 +843,7 @@ function sessionsTable(machines, hermesSessions) {
       model: s.model || "",
       thinkingLevel: "",
       messageCount: s.messageCount || 0,
+      toolCallCount: s.toolCallCount || 0,
       inputTokens: s.inputTokens || 0,
       outputTokens: s.outputTokens || 0,
       costUsd: s.estimatedCostUsd || 0,
@@ -732,19 +866,34 @@ function sessionsTable(machines, hermesSessions) {
   // Quiet runs (no stored output) add no value here — drop them before
   // paging. The flash signature map above still covers every session, so a
   // quiet run that later speaks flashes when it first appears.
+  const renderAt = Date.now();
+  const entryKey = (entry) =>
+    (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
+  // Detect activity across the complete session set before pagination. An
+  // active run can update while the operator is looking at another page.
+  for (const entry of flat) {
+    const key = entryKey(entry);
+    const changed = sessionBaselineReady && lastSigs[key] !== newSigs[key];
+    const live = entry.kind === "hermes" ? entry.s.active : (entry.s.active && entry.m.online);
+    if (changed) flashingSessions.set(key, renderAt + ROW_FLASH_MS);
+    if (changed && live) activeFlashDetected = true;
+  }
   const visible = flat.filter((entry) => (entry.s.outputs || []).length > 0);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
   const pageItems = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const rows = pageItems.map((entry) => {
-    const key = (entry.kind === "hermes" ? "hermes/" : entry.m.name + "/") + (entry.s.id || "");
-    const flash = lastSigs[key] && lastSigs[key] !== newSigs[key];
+    const key = entryKey(entry);
+    const flash = (flashingSessions.get(key) || 0) > renderAt;
     const outs = availableOutputs(entry.s);
     const expandedNow = !!(outs && expandedOutputs.has(key));
     const subs = expandedNow ? renderOutputRows(outs, flash) : "";
     return sessionRow(entry.s, entry.m, flash, entry.kind, !!outs, expandedNow, key) + subs;
   });
   lastSigs = newSigs;
+  for (const [key, expiresAt] of flashingSessions) {
+    if (expiresAt <= Date.now() || !newSigs[key]) flashingSessions.delete(key);
+  }
   // Hermes rows arrive via the Hermes feed regardless of machine state, so
   // the empty states below distinguish "nothing configured" from
   // "configured, but nothing has spoken yet".
@@ -809,8 +958,10 @@ let lastHermes = [];
 // the click lands instantly instead of waiting for the next poll.
 function renderSessions() {
   if (!lastFleet) return;
+  activeFlashDetected = false;
   document.getElementById("app").innerHTML = sessionsTable(lastFleet.machines, lastHermes);
   renderUsage(lastFleet);
+  if (activeFlashDetected) triggerActivityPulse(lastFleet.activeSessions || 0);
 }
 
 const POLL_TIMEOUT_MS = 4500;
@@ -831,17 +982,26 @@ async function tick() {
     document.getElementById("generated").innerHTML =
       `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
     lastFleet = fleet;
-    renderSessions();
     updatePulse(fleet);
+    renderSessions();
 
     const hermesPayload = await hermesPayloadPromise;
     if (hermesPayload) {
       lastHermes = hermesPayload.sessions || [];
+      const hermesActive = Number.isFinite(hermesPayload.activeSessions)
+        ? hermesPayload.activeSessions
+        : lastHermes.filter(session => session.active).length;
+      lastFleet = {
+        ...lastFleet,
+        activeSessions: activePiSessionCount(lastFleet) + hermesActive,
+      };
+      updatePulse(lastFleet);
       renderSessions();
     }
   } catch (err) {
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   } finally {
+    if (lastFleet) sessionBaselineReady = true;
     clearTimeout(fleetTimeout);
     clearTimeout(hermesTimeout);
     fleetController.abort();
