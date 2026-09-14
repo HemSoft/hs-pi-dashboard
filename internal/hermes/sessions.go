@@ -91,15 +91,17 @@ func New() *Provider {
 // Snapshot returns the current session list.
 func (p *Provider) Snapshot(limit int) Snapshot {
 	return Snapshot{
-		GeneratedAt: time.Now(),
-		Sessions:    p.List(limit),
+		GeneratedAt:    time.Now(),
+		Sessions:       p.List(limit),
+		ActiveSessions: p.ActiveCount(),
 	}
 }
 
 // Snapshot is what /api/hermes-sessions serves.
 type Snapshot struct {
-	GeneratedAt time.Time `json:"generatedAt"`
-	Sessions    []Session `json:"sessions"`
+	GeneratedAt    time.Time `json:"generatedAt"`
+	Sessions       []Session `json:"sessions"`
+	ActiveSessions int       `json:"activeSessions"`
 }
 
 type profileEntry struct {

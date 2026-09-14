@@ -88,7 +88,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .pulse-canvas { filter: drop-shadow(0 0 2px rgba(50, 255, 126, .45)); }
-    .pulse-cursor { animation: none; transition: none; }
+    .pulse-cursor, .pulse-cursor.beat { animation: none; transition: none; }
     .refresh .dot, .live { animation: none; }
   }
   /* Usage cards are account-level (merged across agents) and laid out as
@@ -694,6 +694,14 @@ function updatePulse(fleet) {
   canvas.setAttribute("aria-label", `${count} active agent ${count === 1 ? "session" : "sessions"}`);
 }
 
+function activePiSessionCount(fleet) {
+  return (fleet.machines || []).reduce((total, machine) => {
+    if (!machine.online) return total;
+    if (Number.isFinite(machine.activeSessions)) return total + machine.activeSessions;
+    return total + (machine.sessions || []).filter(session => session.active).length;
+  }, 0);
+}
+
 function cardCollapsed(machine, key) {
   return localStorage.getItem("hs-pi-dashboard:card-collapsed:" + machine + ":" + key) === "1";
 }
@@ -972,6 +980,14 @@ async function tick() {
     const hermesPayload = await hermesPayloadPromise;
     if (hermesPayload) {
       lastHermes = hermesPayload.sessions || [];
+      const hermesActive = Number.isFinite(hermesPayload.activeSessions)
+        ? hermesPayload.activeSessions
+        : lastHermes.filter(session => session.active).length;
+      lastFleet = {
+        ...lastFleet,
+        activeSessions: activePiSessionCount(lastFleet) + hermesActive,
+      };
+      updatePulse(lastFleet);
       renderSessions();
     }
   } catch (err) {
