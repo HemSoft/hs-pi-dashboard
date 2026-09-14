@@ -147,10 +147,10 @@ func TestCodexAccountIDFromJWT(t *testing.T) {
 func TestAgentUsageEndpointServesCachedSnapshot(t *testing.T) {
 	// The agent's /usage handler must serve the cache, not refetch per hit.
 	store := NewStore(New(), "home", time.Minute)
-	store.snapshot = Snapshot{Machine: "home", Cards: []Card{{Key: "xai", Label: "xAI (Grok)", Kind: KindUnknown}}}
+	store.snapshot = Snapshot{Machine: "home", Cards: []Card{{Key: "moonshot", Label: "Moonshot AI", Kind: KindBalance}}}
 	store.readyOnce.Do(func() { close(store.ready) })
 	got := store.Snapshot()
-	if got.Machine != "home" || len(got.Cards) != 1 || got.Cards[0].Kind != KindUnknown {
+	if got.Machine != "home" || len(got.Cards) != 1 || got.Cards[0].Kind != KindBalance {
 		t.Fatalf("usage snapshot = %+v", got)
 	}
 }
@@ -160,11 +160,6 @@ func TestContextCancellationPropagates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for _, card := range f.FetchAll(ctx) {
-		// xai never fetches; every real fetcher must report an error, never
-		// panic, when the context is already cancelled.
-		if card.Key == "xai" {
-			continue
-		}
 		if card.Error == "" {
 			t.Fatalf("card %s unexpectedly succeeded with cancelled context", card.Key)
 		}

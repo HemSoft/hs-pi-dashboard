@@ -29,8 +29,8 @@ Above the session grid sits an expandable/collapsible **Usage & Balances**
 section with speedometer cards per provider: Codex (weekly window),
 OpenCode Go (5h / weekly / monthly), and Antigravity (Gemini and 3P pools,
 5h + weekly) show usage *left* on the plan as gold gauges with reset
-countdowns; OpenCode Zen and Moonshot AI show prepaid dollar balances. xAI
-renders as an explicit "no usage API yet" card. The agent refreshes usage
+countdowns; OpenCode Zen and Moonshot AI show prepaid dollar balances. The
+agent refreshes usage
 every 60s (endpoint `GET /usage`), the server folds it into `/api/fleet`, and
 the gauges read `100 - used_percent` so full-bleed windows read zero.
 
@@ -97,6 +97,27 @@ If other machines can't reach port 8787, allow it inbound once (admin):
 netsh advfirewall firewall add rule name="hs-pi-dashboard agent" dir=in action=allow protocol=TCP localport=8787
 ```
 
+### air — macOS LaunchAgent (agent)
+
+Ship the arm64 binary via Taildrop from any tailnet machine, then set it up on
+the Mac (the file arrives in ~/Downloads):
+
+```powershell
+tailscale file cp dist/hs-pi-dashboard-darwin-arm64 franzs-macbook-air:
+```
+
+```bash
+mkdir -p ~/bin ~/logs
+mv ~/Downloads/hs-pi-dashboard-darwin-arm64 ~/bin/hs-pi-dashboard
+chmod +x ~/bin/hs-pi-dashboard
+mkdir -p ~/Library/LaunchAgents
+cp deploy/com.hemsoft.hs-pi-dashboard.agent.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.hemsoft.hs-pi-dashboard.agent.plist
+```
+
+RunAtLoad + KeepAlive start the agent at login and restart it after crashes or
+a failed Tailscale bind, so reboots no longer leave the machine dark.
+
 ### mini — always-on server
 
 Ship the Linux binary via Taildrop, then run it at boot:
@@ -120,7 +141,8 @@ reach them. Add a shared token in v2 before any broader exposure.
 
 - [ ] v2: pi extension reporting live turn/tool events from running sessions
 - [x] v1: usage speedometers (Codex, OpenCode Go, Antigravity, Zen, Moonshot)
-- [ ] v2: xAI usage once a source exists
+- [ ] v2: xAI usage once a source exists (card removed for now — Grok
+      exposes no usage API)
 - [ ] v2: optional bearer token between server and agents
 - [ ] v2: systemd user unit for mini (with lingering) instead of cron
 - [ ] v3: click-through session transcript, cost rollups per project

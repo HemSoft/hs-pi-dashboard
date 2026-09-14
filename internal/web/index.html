@@ -44,9 +44,19 @@
   .usage-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
   .usage-toggle .hint { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
   .usage-body.collapsed { display: none; }
-  .usage-machines { display: flex; flex-direction: column; gap: 18px; margin-bottom: 10px; }
-  .usage-machine-label { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
-  .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  /* Usage cards are account-level (merged across agents) and laid out as
+     masonry columns of equal width: the compact cards (single-gauge
+     speedometers + balances) stack in the first column so the money cards
+     tuck directly under Codex, and each multi-gauge card gets its own
+     column. A column holding a single card stretches it to the section
+     height so all card bottoms align. */
+  .usage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 980px) {
+    .usage-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  }
+  .usage-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .usage-col > .ucard:only-child:not(.collapsed) { flex: 1 1 auto; }
+  .gauges { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
   .ucard {
     background: var(--card); border: 1px solid var(--card-border); border-radius: 4px;
     padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
@@ -62,7 +72,6 @@
   .gauge .gproj.over { color: #ff6b6b; }
   .balance { display: flex; align-items: baseline; gap: 10px; }
   .balance .amount { color: var(--gold); font-size: 26px; font-weight: 600; }
-  .balance .unit { color: var(--muted); font-size: 11px; }
   .usage-stale { color: var(--muted); font-size: 10px; }
   .ucard.collapsible { cursor: pointer; user-select: none; }
   .ucard.collapsible:hover { border-color: #3f3f3f; }
@@ -70,8 +79,8 @@
   .ucard.collapsed {
     flex-direction: row; align-items: baseline; flex-wrap: wrap;
     gap: 4px 10px; padding: 5px 12px; border-left-width: 2px;
-    /* Grid stretch would pin this card to the row's tallest sibling with
-       dead space beneath the chip; size to content instead. */
+    /* Row stretch would pin this card to its siblings' height with dead
+       space beneath the chip; size to content instead. */
     align-self: start;
   }
   .ucard.collapsed .ucard-label { font-size: 12.5px; }
@@ -124,8 +133,8 @@
   .session-table tr.offline td { opacity: .45; }
   .session-table tr.flash td { animation: row-flash 1.2s ease-out; }
   @keyframes row-flash {
-    from { background-color: rgba(255, 215, 0, .22); box-shadow: inset 3px 0 0 0 var(--gold), inset 0 0 14px rgba(255, 215, 0, .25); }
-    to { background-color: transparent; box-shadow: none; }
+    from { background-color: rgba(255, 215, 0, .22); }
+    to { background-color: transparent; }
   }
   .session-table tr:last-child td { border-bottom: 0; }
   .session-table tr.has-sub td { border-bottom: 0; }
@@ -359,7 +368,7 @@ function usageCard(card, machine) {
       : `<span class="ucard-error">${esc(card.error || "no data")}</span>`;
   } else if (card.kind === "balance") {
     body = card.balanceUsd != null
-      ? `<div class="balance"><span class="amount">$${card.balanceUsd.toFixed(2)}</span><span class="unit">prepaid credit left</span></div>`
+      ? `<div class="balance"><span class="amount">$${card.balanceUsd.toFixed(2)}</span></div>`
       : `<span class="ucard-error">${esc(card.error || "unknown")}</span>`;
   } else {
     body = `<span class="ucard-error">${esc(card.error || "no usage source yet")}</span>`;
@@ -407,7 +416,7 @@ function compactBody(card) {
   }
   if (card.kind === "balance") {
     return card.balanceUsd != null
-      ? `<div class="ucard-compact"><span class="mini"><b style="color:var(--gold)">$${card.balanceUsd.toFixed(2)}</b> left</span></div>`
+      ? `<div class="ucard-compact"><span class="mini"><b style="color:var(--gold)">$${card.balanceUsd.toFixed(2)}</b></span></div>`
       : `<div class="ucard-compact"><span class="ucard-error">${esc(card.error || "unknown")}</span></div>`;
   }
   return `<span class="ucard-error">${esc(card.error || "")}</span>`;
@@ -439,19 +448,36 @@ function renderUsage(fleet) {
     body.innerHTML = '<p class="empty">no usage reporters online yet</p>';
     return;
   }
-  const showMachineLabels = machines.length > 1;
+  // Usage cards are account-level, not per machine: several agents report the
+  // same subscriptions, so merge them by key and keep the healthiest, freshest
+  // card for each. One global set: speedometers on top, balances underneath.
+  const byKey = new Map();
+  for (const m of machines) {
+    for (const c of m.usage.cards) {
+      const prev = byKey.get(c.key);
+      const better = !prev
+        || (prev.error && !c.error)
+        || ((!!prev.error === !!c.error)
+            && new Date(c.fetchedAt || 0) > new Date(prev.fetchedAt || 0));
+      if (better) byKey.set(c.key, c);
+    }
+  }
+  const cards = [...byKey.values()];
+  // Masonry columns: column 1 stacks the compact cards — single-gauge
+  // speedometers with the balances tucked directly underneath; every other
+  // speedometer card gets its own column (extras round-robin over columns
+  // 2-3). All cards render content-sized, so the section stays tight.
+  const isSolo = (c) => c.kind === "quota" && c.gauges?.length === 1;
+  const col1 = [
+    ...cards.filter((c) => isSolo(c)),
+    ...cards.filter((c) => c.kind !== "quota"),
+  ];
+  const multis = cards.filter((c) => c.kind === "quota" && !isSolo(c));
+  const cols = [col1];
+  multis.forEach((c, i) => (cols[1 + (i % 2)] ??= []).push(c));
   body.innerHTML =
-    '<div class="usage-machines">' +
-    machines
-      .map(
-        (m) => `
-      <div>
-        ${showMachineLabels ? `<div class="usage-machine-label">${esc(m.name)}</div>` : ""}
-        <div class="usage-grid">${m.usage.cards.map((c) => usageCard(c, m.name)).join("")}</div>
-      </div>`,
-      )
-      .join("") +
-    "</div>";
+    `<div class="usage-grid">${cols.map((col) =>
+      `<div class="usage-col">${col.map((c) => usageCard(c, "global")).join("")}</div>`).join("")}</div>`;
 }
 
 const USAGE_TOGGLE_KEY = "hs-pi-dashboard:usage-open";

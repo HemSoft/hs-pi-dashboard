@@ -131,6 +131,7 @@ func (s *Server) Run(addr string) error {
 	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(web.Index)
 	})
 	// Hermes sessions come from ~/.hermes/state.db on the same machine the
@@ -291,6 +292,15 @@ func (s *Server) fetchUsage(ctx context.Context, t Target) *usage.Snapshot {
 	if json.Unmarshal(body, &snap) != nil {
 		return nil
 	}
+	// Drop "unknown" cards (the old agents' xAI placeholder): they carry no
+	// data, and agents keep sending them until they are redeployed.
+	kept := snap.Cards[:0]
+	for _, c := range snap.Cards {
+		if c.Kind != usage.KindUnknown {
+			kept = append(kept, c)
+		}
+	}
+	snap.Cards = kept
 	if len(snap.Cards) == 0 {
 		// The agent has not finished its first refresh; keep the previous
 		// snapshot instead of caching emptiness.

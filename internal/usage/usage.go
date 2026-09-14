@@ -1,6 +1,6 @@
 // Package usage fetches provider plan/balance data for the dashboard cards:
-// Codex and OpenCode Go plan windows, Antigravity quota pools, xAI (no usage
-// API yet), and OpenCode Zen + Moonshot prepaid balances.
+// Codex and OpenCode Go plan windows, Antigravity quota pools, and OpenCode
+// Zen + Moonshot prepaid balances.
 //
 // The fetchers port the proven logic from ~/.pi/agent/extensions/statusline.ts
 // (which in turn ports CodexBar iOS). Credentials are read from the same
@@ -160,7 +160,7 @@ func (s *Store) Snapshot() Snapshot {
 // fail return a card carrying the error; nothing panics or blocks long.
 func (f *Fetcher) FetchAll(ctx context.Context) []Card {
 	fetchers := [](func(context.Context) Card){
-		f.codex, f.opencodeGo, f.antigravity, f.xai, f.opencodeZen, f.moonshot,
+		f.codex, f.opencodeGo, f.antigravity, f.opencodeZen, f.moonshot,
 	}
 	cards := make([]Card, len(fetchers))
 	var wg sync.WaitGroup
@@ -971,16 +971,6 @@ func (f *Fetcher) refreshAntigravity(ctx context.Context, creds *agCreds, client
 	refresh := creds.RefreshToken
 	return &agCreds{AccessToken: tok.AccessToken, RefreshToken: refresh,
 		ExpiryMs: time.Now().UnixMilli() + tok.ExpiresIn*1000, Source: creds.Source}
-}
-
-// --- xAI --------------------------------------------------------------------
-
-func (f *Fetcher) xai(ctx context.Context) Card {
-	// The Grok/X subscription exposes no usage endpoint we can call today
-	// (pi's xAI integration only ships OAuth device endpoints). The card
-	// renders as an explicit "unknown" until a source exists.
-	return Card{Key: "xai", Label: "xAI (Grok)", Kind: KindUnknown,
-		Error: "no usage API yet", FetchedAt: time.Now()}
 }
 
 // --- Moonshot ---------------------------------------------------------------

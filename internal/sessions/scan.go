@@ -244,7 +244,7 @@ func applyEntry(s *Summary, line []byte) {
 		s.ID = rawString(head.ID)
 		s.Name = head.Name
 		s.Cwd = head.Cwd
-		s.Project = filepath.Base(head.Cwd)
+		s.Project = projectName(head.Cwd)
 		if ts, ok := parseTimestamp(head.Timestamp); ok {
 			s.StartedAt = ts
 		}
@@ -414,6 +414,18 @@ func condense(text string) string {
 		text = strings.TrimSpace(text[:160]) + "…"
 	}
 	return text
+}
+
+// projectName labels a session from its cwd. A session launched from the
+// home directory itself would otherwise take the account name as its project
+// (a Mac account named "home" produces sessions titled "home", which reads
+// like another machine on the dashboard); "~" marks them plainly.
+func projectName(cwd string) string {
+	if home, err := os.UserHomeDir(); err == nil && cwd != "" &&
+		filepath.Clean(cwd) == filepath.Clean(home) {
+		return "~"
+	}
+	return filepath.Base(cwd)
 }
 
 // parseTimestamp accepts the shapes pi writes: RFC3339 strings and

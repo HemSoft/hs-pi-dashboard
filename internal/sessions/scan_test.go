@@ -77,6 +77,42 @@ func TestPollSummarizesSessionFiles(t *testing.T) {
 	}
 }
 
+func TestProjectHomeDirSessionsUseTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	dir := t.TempDir()
+	writeSession(t, dir, "2026-09-10_a.jsonl",
+		`{"type":"session","version":3,"id":"home1","timestamp":"2026-09-10T06:00:00Z","cwd":`+jsonString(home)+`}`,
+	)
+	writeSession(t, dir, "2026-09-10_b.jsonl",
+		`{"type":"session","version":3,"id":"repo1","timestamp":"2026-09-10T06:01:00Z","cwd":`+jsonString(filepath.Join(home, "github", "hemsoft", "codexbar-ios"))+`}`,
+	)
+
+	snap := NewScanner(dir, 2*time.Minute).Poll()
+	projects := map[string]string{}
+	for _, s := range snap.Sessions {
+		projects[s.ID] = s.Project
+	}
+	if projects["home1"] != "~" {
+		t.Errorf("home-dir session project = %q, want ~", projects["home1"])
+	}
+	if projects["repo1"] != "codexbar-ios" {
+		t.Errorf("repo session project = %q, want codexbar-ios", projects["repo1"])
+	}
+}
+
+// jsonString encodes s as a quoted JSON string so OS paths with backslashes
+// survive inside a JSONL fixture line.
+func jsonString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 func TestPollIncrementalAppend(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repo", "s.jsonl")
