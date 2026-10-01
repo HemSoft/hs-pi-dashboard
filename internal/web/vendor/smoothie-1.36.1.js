@@ -679,17 +679,21 @@
       width = this.canvas.offsetWidth;
       height = this.canvas.offsetHeight;
 
-      if (width !== this.lastWidth) {
+      // Local fix: display scaling can change without changing the CSS height.
+      // Reset both backing dimensions so their resolution and transform agree.
+      var dprChanged = dpr !== this.lastDevicePixelRatio;
+      if (width !== this.lastWidth || dprChanged) {
         this.lastWidth = width;
         this.canvas.setAttribute('width', (Math.floor(width * dpr)).toString());
         this.canvas.getContext('2d').scale(dpr, dpr);
       }
-      if (height !== this.lastHeight) {
+      if (height !== this.lastHeight || dprChanged) {
         this.lastHeight = height;
         this.canvas.setAttribute('height', (Math.floor(height * dpr)).toString());
         this.canvas.getContext('2d').scale(dpr, dpr);
       }
 
+      this.lastDevicePixelRatio = dpr;
       this.clientWidth = width;
       this.clientHeight = height;
     } else {

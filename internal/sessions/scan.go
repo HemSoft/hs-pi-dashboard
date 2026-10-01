@@ -126,7 +126,13 @@ func (s *Scanner) Poll() Snapshot {
 			return nil //nolint:nilerr // unreadable entries are simply skipped
 		}
 		seen[path] = true
-		summaries = append(summaries, s.pollFile(path, now))
+		summary := s.pollFile(path, now)
+		// Subagent transcript artifacts also use .jsonl and live below the
+		// sessions tree, but they are not Pi session files. A real session
+		// header always supplies an id; omit anything without one.
+		if summary.ID != "" {
+			summaries = append(summaries, summary)
+		}
 		return nil
 	})
 

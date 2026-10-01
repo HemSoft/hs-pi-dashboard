@@ -77,6 +77,31 @@ func TestPollSummarizesSessionFiles(t *testing.T) {
 	}
 }
 
+func TestPollIgnoresSubagentTranscriptArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	writeSession(t, dir, "parent/run-0/session.jsonl",
+		`{"type":"session","version":3,"id":"child","timestamp":"2026-09-18T18:10:49Z","cwd":"/repo"}`,
+		`{"type":"message","id":"a1","timestamp":"2026-09-18T18:12:36Z","message":{"role":"assistant","content":"done"}}`,
+	)
+	writeSession(t, dir, "subagent-artifacts/researcher_transcript.jsonl",
+		`{"timestamp":"2026-09-18T18:10:49Z","cwd":"/repo","message":{"role":"user","content":"research this"}}`,
+		`{"timestamp":"2026-09-18T18:12:36Z","message":{"role":"assistant","content":"done"}}`,
+	)
+
+	scanner := NewScanner(dir, 2*time.Minute)
+	scanner.now = func() time.Time {
+		return time.Date(2026, 9, 18, 18, 13, 0, 0, time.UTC)
+	}
+	snap := scanner.Poll()
+
+	if len(snap.Sessions) != 1 || snap.Sessions[0].ID != "child" {
+		t.Fatalf("sessions = %+v, want only the real child session", snap.Sessions)
+	}
+	if snap.ActiveSessions != 1 {
+		t.Fatalf("activeSessions = %d, want 1", snap.ActiveSessions)
+	}
+}
+
 func TestProjectHomeDirSessionsUseTilde(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

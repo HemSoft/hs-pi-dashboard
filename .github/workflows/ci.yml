@@ -33,6 +33,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Test Pulse renderer
+        run: node --test scripts/pulse.test.cjs
+
       - name: Staticcheck
         run: staticcheck ./...
 
