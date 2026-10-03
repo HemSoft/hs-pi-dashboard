@@ -5,3 +5,6 @@ dist/
 coverage.out
 agent.log
 serve.log
+__pycache__/
+.playwright-cli/
+.impeccable/review/

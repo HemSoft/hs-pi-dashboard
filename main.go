@@ -18,7 +18,7 @@ import (
 	"github.com/HemSoft/hs-pi-dashboard/internal/fleet"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 // defaultFleet covers the five computers from the fleet map. The dashboard
 // marks unreachable machines offline instead of failing.
@@ -70,11 +70,12 @@ Agent flags:
   -claude-dir string    Claude Code projects dir (default ~/.claude/projects)
   -machine string       label reported in the snapshot (default hostname)
   -active-window dur    how long a quiet session counts as active (default 2m)
+  -herdr-bin string     installed Herdr executable (default auto-discover)
 
 Serve flags:
   -addr string          listen address (default ":8788"; bind the Tailscale IP
                         so phones can open it, e.g. 100.97.164.73:8788)
-  -fleet spec           comma-separated name|url pairs of agents
+  -fleet spec           comma-separated name|url[|https-terminal-url] entries
   -poll dur             agent poll interval (default 5s)
 `)
 }
@@ -86,6 +87,7 @@ func runAgent(args []string) error {
 	claudeDir := fs.String("claude-dir", "", "Claude Code projects dir (default ~/.claude/projects)")
 	machine := fs.String("machine", "", "label reported in the snapshot (default hostname)")
 	window := fs.Duration("active-window", 2*time.Minute, "how long a quiet session counts as active")
+	herdrBin := fs.String("herdr-bin", "", "installed Herdr executable (default auto-discover)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -103,13 +105,14 @@ func runAgent(args []string) error {
 		ClaudeDir:    *claudeDir,
 		Machine:      label,
 		ActiveWindow: *window,
+		HerdrBinary:  *herdrBin,
 	})
 }
 
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", ":8788", "listen address")
-	fleetSpec := fs.String("fleet", defaultFleet, "agents as comma-separated name|url pairs")
+	fleetSpec := fs.String("fleet", defaultFleet, "agents as comma-separated name|url[|https-terminal-url] entries")
 	poll := fs.Duration("poll", 5*time.Second, "agent poll interval")
 	if err := fs.Parse(args); err != nil {
 		return err

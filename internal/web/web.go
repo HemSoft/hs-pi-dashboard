@@ -8,6 +8,14 @@ import _ "embed"
 //go:embed index.html
 var Index []byte
 
+// HerdrJS and HerdrCSS implement the live, read-only Herdr monitor.
+//
+//go:embed herdr.js
+var HerdrJS []byte
+
+//go:embed herdr.css
+var HerdrCSS []byte
+
 // SmoothieJS is the pinned Smoothie Charts 1.36.1 runtime used by the Pulse
 // monitor, with a local responsive-resize fix for device-pixel-ratio changes.
 // It is served locally so the dashboard works without public internet.

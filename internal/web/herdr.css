@@ -1,0 +1,50 @@
+.herdr-section { margin-bottom: 28px; }
+.herdr-heading { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.herdr-heading h2 { font-size: 17px; font-weight: 600; color: var(--gold); }
+.herdr-heading p { font-size: 12px; color: #aaa596; line-height: 1.5; }
+.herdr-machines { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.herdr-machine { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex: 1 1 190px; min-width: 0; min-height: 58px; padding: 10px 14px; border: 1px solid var(--card-border); border-radius: 4px; background: var(--card); color: var(--text); text-decoration: none; }
+a.herdr-machine:hover { background: #18170f; border-color: var(--gold-dim); }
+.herdr-machine strong { font-size: 14px; color: var(--gold); }
+.herdr-machine small { display: block; font-size: 11px; color: #aaa596; margin-top: 4px; line-height: 1.4; }
+.herdr-machine svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--gold); }
+.herdr-machine.unavailable strong { color: #aaa596; }
+.herdr-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.herdr-controls label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #aaa596; }
+.herdr-controls select { min-height: 36px; padding: 6px 28px 6px 10px; color: var(--text); background: var(--card); border: 1px solid var(--card-border); border-radius: 4px; font: inherit; cursor: pointer; }
+.herdr-summary { font-size: 12px; color: var(--text); margin-left: auto; font-variant-numeric: tabular-nums; }
+.herdr-columns, .herdr-row { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, .8fr) 100px; gap: 16px; align-items: center; }
+.herdr-columns { padding: 8px 14px; font-size: 11px; color: #aaa596; }
+.herdr-rows { list-style: none; padding: 0; border: 1px solid var(--card-border); border-radius: 4px; background: var(--card); }
+.herdr-row { padding: 14px; border-bottom: 1px solid var(--card-border); font-size: 13px; min-height: 65px; }
+.herdr-row:last-child { border-bottom: 0; }
+.herdr-row > * { min-width: 0; overflow-wrap: anywhere; }
+.herdr-project { font-weight: 600; color: var(--text); }
+.herdr-path { display: block; font-size: 11px; color: #aaa596; font-weight: 400; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-location { color: #aaa596; font-size: 12px; }
+.herdr-location small { display: block; font-size: 11px; margin-top: 4px; }
+.herdr-state { display: inline-block; font-size: 12px; padding: 4px 7px; border-radius: 3px; background: #222; color: #bbb; justify-self: start; }
+.herdr-state.working { background: #29230c; color: #ffe57b; }
+.herdr-state.blocked { background: #3a1914; color: #ffb2a5; }
+.herdr-state.done { background: #142d20; color: #a1dfb3; }
+.herdr-state.idle { background: #1b2433; color: #b9ccee; }
+.herdr-empty { padding: 20px 14px; font-size: 13px; color: #aaa596; line-height: 1.6; }
+.herdr-note { margin-top: 10px; font-size: 11px; color: #aaa596; line-height: 1.6; }
+.herdr-note.error { color: #ffb2a5; }
+.herdr-section :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.herdr-section ::selection { color: #050505; background: var(--gold); }
+@media (max-width: 600px) {
+  .herdr-controls { gap: 10px; }
+  .herdr-controls label { flex: 1 1 130px; flex-wrap: wrap; }
+  .herdr-controls select { width: 100%; min-height: 42px; }
+  .herdr-summary { width: 100%; margin-left: 0; line-height: 1.5; }
+  .herdr-columns { display: none; }
+  .herdr-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; }
+  .herdr-project { grid-column: 1; grid-row: 1; }
+  .herdr-state { grid-column: 2; grid-row: 1; justify-self: end; }
+  .herdr-location { grid-column: 1; grid-row: 2; }
+  .herdr-row .herdr-agent { grid-column: 2; grid-row: 2; font-size: 12px; text-align: right; }
+  .herdr-row .herdr-session { grid-column: 1 / -1; grid-row: 3; font-size: 11px; color: #aaa596; }
+  .herdr-session::before { content: 'session '; }
+  .herdr-heading { gap: 6px; }
+}

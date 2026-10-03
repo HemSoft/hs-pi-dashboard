@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/HemSoft/hs-pi-dashboard/internal/herdr"
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
 	"github.com/HemSoft/hs-pi-dashboard/internal/usage"
 )
@@ -21,12 +22,19 @@ type Options struct {
 	Machine      string        // label reported in the snapshot
 	ActiveWindow time.Duration // how long a quiet session still counts as active
 	UsagePoll    time.Duration // provider usage refresh interval (default 1m)
+	HerdrBinary  string        // installed Herdr executable; empty = discover it
 }
 
 // Run starts the agent HTTP server and blocks until it exits.
 func Run(opts Options) error {
 	usageStore := usage.NewStore(usage.New(), opts.Machine, usagePollInterval(opts.UsagePoll))
 	mux := http.NewServeMux()
+	live := herdr.New(opts.HerdrBinary)
+	go live.Start(context.Background())
+	mux.HandleFunc("GET /herdr", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, live.Snapshot())
+	})
 
 	mux.HandleFunc("GET /sessions", sessionHandler(opts))
 

@@ -9,10 +9,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HemSoft/hs-pi-dashboard/internal/herdr"
 	"github.com/HemSoft/hs-pi-dashboard/internal/hermes"
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
 	"github.com/HemSoft/hs-pi-dashboard/internal/usage"
@@ -21,8 +23,9 @@ import (
 
 // Target is one machine's agent.
 type Target struct {
-	Name string
-	URL  string
+	Name        string
+	URL         string
+	TerminalURL string
 }
 
 // MachineState is the aggregated view of one machine.
@@ -35,6 +38,8 @@ type MachineState struct {
 	Sessions       []sessions.Summary `json:"sessions"`
 	ActiveSessions int                `json:"activeSessions"`
 	Usage          *usage.Snapshot    `json:"usage,omitempty"`
+	Herdr          *herdr.Snapshot    `json:"herdr,omitempty"`
+	TerminalURL    string             `json:"terminalUrl,omitempty"`
 }
 
 // FleetSnapshot is the dashboard-facing aggregation of all machines.
@@ -66,11 +71,19 @@ func ParseTargets(spec string) ([]Target, error) {
 		if part == "" {
 			continue
 		}
-		name, url, ok := strings.Cut(part, "|")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(url) == "" {
-			return nil, fmt.Errorf("invalid fleet entry %q: want name|url", part)
+		fields := strings.Split(part, "|")
+		if len(fields) < 2 || len(fields) > 3 || strings.TrimSpace(fields[0]) == "" || strings.TrimSpace(fields[1]) == "" {
+			return nil, fmt.Errorf("invalid fleet entry %q: want name|url[|https-terminal-url]", part)
 		}
-		targets = append(targets, Target{Name: strings.TrimSpace(name), URL: strings.TrimSpace(url)})
+		target := Target{Name: strings.TrimSpace(fields[0]), URL: strings.TrimSpace(fields[1])}
+		if len(fields) == 3 {
+			target.TerminalURL = strings.TrimSpace(fields[2])
+			u, err := url.Parse(target.TerminalURL)
+			if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+				return nil, fmt.Errorf("invalid terminal URL for %q: HTTPS without credentials required", target.Name)
+			}
+		}
+		targets = append(targets, target)
 	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("empty fleet spec")
@@ -138,6 +151,8 @@ func (s *Server) poll(ctx context.Context) {
 		go func(t Target) {
 			defer wg.Done()
 			state := s.fetch(ctx, t)
+			state.Herdr = s.fetchHerdr(ctx, t)
+			state.TerminalURL = t.TerminalURL
 			s.mu.Lock()
 			s.cache[t.Name] = state
 			s.mu.Unlock()
@@ -214,6 +229,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/fleet", s.handleFleet)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("GET /assets/herdr.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(web.HerdrJS)
+	})
+	mux.HandleFunc("GET /assets/herdr.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(web.HerdrCSS)
 	})
 	mux.HandleFunc("GET /assets/smoothie-1.36.1.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")

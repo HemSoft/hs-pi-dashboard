@@ -21,6 +21,12 @@ One Go binary, two modes:
 
 ## What it shows
 
+The live Herdr monitor shows agent states across machines and named Herdr
+sessions, with machine and state filters. Collection is read-only and does not
+send input, change focus, start a Herdr server, or read terminal transcripts.
+Unavailable or stale collectors do not count as live. Agents running only in
+tmux are not included in this monitor; session history and Pulse remain separate.
+
 The session table shows each machine, project, provider, model, thinking level,
 message count, cost, start time, and duration. Active sessions remain visible
 before they produce assistant text and flash when their state changes;
@@ -74,11 +80,16 @@ go build ./...
 go test ./...
 ```
 
-Cross-compile for the fleet:
+Cross-compile for the fleet with explicit OS and architecture targets. The
+builder checks each binary's format and architecture before replacing an
+existing artifact. It also keeps Windows build processes hidden.
 
 ```powershell
-$env:GOOS="linux";   go build -o dist/hs-pi-dashboard-linux-amd64 .;  $env:GOOS=$null
-$env:GOOS="darwin";  go build -o dist/hs-pi-dashboard-darwin-arm64 .; $env:GOOS=$null
+python deploy/build_fleet.py
+# Build one target:
+python deploy/build_fleet.py --target linux-amd64
+# Test the format checks, including a Windows binary mislabeled as Linux:
+python -m unittest discover -s deploy -p test_build_fleet.py
 ```
 
 ## Run
@@ -94,7 +105,10 @@ $env:GOOS="darwin";  go build -o dist/hs-pi-dashboard-darwin-arm64 .; $env:GOOS=
 ```
 
 Endpoints: `GET /sessions` (snapshot JSON), `GET /usage` (provider plan and
-balance cards), `GET /health`.
+balance cards), `GET /herdr` (cached live agent states), `GET /health`.
+Herdr is discovered from installed CLI locations, or can be specified with
+`-herdr-bin`. Machines without Herdr report unavailable telemetry rather than
+an empty healthy monitor.
 
 ### Server (mini)
 
@@ -105,8 +119,10 @@ balance cards), `GET /health`.
 Endpoints: `/` (dashboard), `/api/fleet` (aggregated JSON), `/healthz`.
 
 Agents are configured with `-fleet name|url` pairs; the default covers all
-five computers from the fleet map. Machines that don't answer are shown
-offline with their last known sessions grayed out.
+five computers from the fleet map. An optional third field,
+`name|url|https-terminal-url`, adds a link to that machine's browser terminal.
+Terminal links require HTTPS and cannot embed credentials. Machines that don't
+answer are shown offline with their last known sessions grayed out.
 
 ## Install
 

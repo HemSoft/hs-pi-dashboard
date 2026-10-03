@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi Fleet Dashboard</title>
+<title>Agent Fleet Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23050505'/%3E%3Cpath d='m7 9 7 7-7 7m11 0h7' fill='none' stroke='%23ffd700' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/herdr.css">
 <style>
   :root {
     --gold: #ffd700;
@@ -212,10 +214,22 @@
 </head>
 <body>
 <header>
-  <h1>Pi Fleet Dashboard</h1>
+  <h1>Agent Fleet Dashboard</h1>
   <span class="sub" id="generated"></span>
   <span class="refresh"><span class="dot"></span>live · refresh 5s</span>
 </header>
+<section class="herdr-section" aria-labelledby="herdr-title">
+  <div class="herdr-heading"><h2 id="herdr-title">Live Herdr agents</h2><p>Home, Mini, and Air. One view, separate sessions.</p></div>
+  <nav id="herdr-machines" class="herdr-machines" aria-label="Machine terminals"></nav>
+  <div class="herdr-controls">
+    <label>Machine <select id="herdr-machine-filter"><option value="all">All machines</option></select></label>
+    <label>State <select id="herdr-state-filter"><option value="all">All states</option><option value="blocked">Blocked</option><option value="done">Done</option><option value="working">Working</option><option value="idle">Idle</option><option value="unknown">Unknown</option></select></label>
+    <span id="herdr-summary" class="herdr-summary" role="status" aria-live="polite">Loading live states...</span>
+  </div>
+  <div class="herdr-columns" aria-hidden="true"><span>Workspace</span><span>Machine / pane</span><span>Agent</span><span>Session</span><span>State</span></div>
+  <ul id="herdr-rows" class="herdr-rows" aria-label="Live agents"><li class="herdr-empty">Connecting to agent collectors...</li></ul>
+  <p id="herdr-note" class="herdr-note">The dashboard reads agent states. Use a machine terminal to interact.</p>
+</section>
 <section class="usage-section">
   <button id="usage-toggle" class="usage-toggle" aria-expanded="true">
     <span class="chev">▾</span> Usage &amp; Balances
@@ -244,6 +258,7 @@
 <main id="app"><p class="empty">loading fleet…</p></main>
 <footer>hs-pi-dashboard · <a href="/api/fleet">/api/fleet</a></footer>
 
+<script src="/assets/herdr.js"></script>
 <script src="/assets/smoothie-1.36.1.js"></script>
 <script>
 const esc = (s) => (s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1046,6 +1061,7 @@ function renderSessions() {
   activeFlashDetected = false;
   document.getElementById("app").innerHTML = sessionsTable(lastFleet.machines, lastHermes);
   renderUsage(lastFleet);
+  HerdrDashboard.render(lastFleet);
   if (activeFlashDetected) triggerActivityPulse(lastFleet.activeSessions || 0);
 }
 
@@ -1060,7 +1076,7 @@ async function tick() {
     const fleetRes = await fetch("/api/fleet", { signal: controller.signal });
     const fleet = await fleetRes.json();
     document.getElementById("generated").innerHTML =
-      `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString()}</b>`;
+      `generated <b>${new Date(fleet.generatedAt).toLocaleTimeString('en-US', {timeZone: 'America/New_York'})} ET</b>`;
     lastFleet = {
       ...fleet,
       activeSessions: snapshotActiveSessionCount(fleet),
@@ -1069,6 +1085,7 @@ async function tick() {
     updatePulse(lastFleet);
     renderSessions();
   } catch (err) {
+    HerdrDashboard.fail();
     document.getElementById("app").innerHTML = `<p class="empty">fleet unreachable: ${esc(String(err))}</p>`;
   } finally {
     if (lastFleet) sessionBaselineReady = true;
