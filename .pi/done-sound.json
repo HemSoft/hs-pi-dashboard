@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "managedBy": "generate-audio",
+  "audioPath": "assets/done.mp3",
+  "enabled": true
+}

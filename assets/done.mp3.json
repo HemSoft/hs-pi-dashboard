@@ -1,0 +1,8 @@
+{
+  "model": "bytedance-seed/seed-audio-1-0",
+  "voice_profile": "guide",
+  "voice_mode": "reference-audio",
+  "format": "mp3",
+  "reference_sha256": "e45c84ca99273c285b51cd71ac41f022e5e4b50f8e504698ea74a856012d21bb",
+  "generation_id": "gen-tts-1791001967-3S5BmUo0Q4afeOGcKMQm"
+}
