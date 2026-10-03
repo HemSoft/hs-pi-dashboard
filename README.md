@@ -3,7 +3,8 @@
 [![CI](https://github.com/HemSoft/hs-pi-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HemSoft/hs-pi-dashboard/actions/workflows/ci.yml)
 
 A gold-on-black, fleet-wide dashboard for [pi](https://github.com/badlogic/pi-mono)
-coding-agent sessions across the Tailscale network. One Go binary, two modes:
+coding-agent sessions across the Tailscale network, including Claude Code.
+One Go binary, two modes:
 
 ```text
 ┌─ laptop ─┐   ┌─ home ──┐   ┌─ air / grokbot ────┐
@@ -35,7 +36,7 @@ agent refreshes usage
 every 60s (endpoint `GET /usage`), the server folds it into `/api/fleet`, and
 the gauges read `100 - used_percent` so full-bleed windows read zero.
 
-The expandable **Pulse** monitor counts recently active Pi and Hermes sessions
+The expandable **Pulse** monitor counts recently active Pi, Claude Code, and Hermes sessions
 across the fleet. Pulse and the table use one fleet snapshot, and every counted
 active session remains in the row payload even beyond the inactive-history cap.
 Its green trace moves continuously to a live cursor at 75% of the monitor
@@ -50,9 +51,21 @@ timestamp do not count. The browser pauses the sweep
 when Pulse is collapsed or the tab is hidden, and reduced-motion mode renders a
 static trace.
 
-The agent only reads pi's session files — it never talks to a running pi
-process, so it works whether or not pi is currently open. v2 plans a real pi
-extension for live streaming (tool calls, thinking) from running sessions.
+The agent reads Pi and Claude Code session files without talking to either
+running process. Claude Code sessions appear in the same table and Pulse count,
+with `claude-code` in the provider column. No Claude hooks or plugin are needed.
+
+Claude transcripts default to `~/.claude/projects`, or the `projects` directory
+under `CLAUDE_CONFIG_DIR` when set. Override the path with `agent -claude-dir`.
+The scanner keeps recent assistant text, model, effort when recorded, message
+counts, and tokens including cache reads and writes. Repeated assistant content
+blocks count as one API message, not separate responses. Subagent directories,
+sidechain records, thinking, and tool payloads are excluded from displayed output.
+
+Activity uses the same recent-write window as Pi, not process liveness. A quiet
+session stops counting after two minutes by default. Claude transcript records
+do not provide dollar costs, so their price cells stay blank. No subscription
+balance is inferred. Future Pi streaming support would use an extension.
 
 ## Build
 

@@ -1,4 +1,4 @@
-// Package agent serves a JSON snapshot of this machine's pi sessions so the
+// Package agent serves a JSON snapshot of this machine's coding sessions so the
 // fleet dashboard can aggregate it.
 package agent
 
@@ -17,6 +17,7 @@ import (
 type Options struct {
 	Addr         string        // listen address, e.g. 100.101.122.39:8787
 	Dir          string        // pi sessions dir; empty = ~/.pi/agent/sessions
+	ClaudeDir    string        // Claude Code projects dir; empty = ~/.claude/projects
 	Machine      string        // label reported in the snapshot
 	ActiveWindow time.Duration // how long a quiet session still counts as active
 	UsagePoll    time.Duration // provider usage refresh interval (default 1m)
@@ -24,15 +25,10 @@ type Options struct {
 
 // Run starts the agent HTTP server and blocks until it exits.
 func Run(opts Options) error {
-	scanner := sessions.NewScanner(opts.Dir, opts.ActiveWindow)
 	usageStore := usage.NewStore(usage.New(), opts.Machine, usagePollInterval(opts.UsagePoll))
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /sessions", func(w http.ResponseWriter, r *http.Request) {
-		snap := scanner.Poll()
-		snap.Machine = opts.Machine
-		writeJSON(w, http.StatusOK, snap)
-	})
+	mux.HandleFunc("GET /sessions", sessionHandler(opts))
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -56,6 +52,16 @@ func Run(opts Options) error {
 	}
 	log.Printf("hs-pi-dashboard agent listening on %s (machine=%s dir=%s)", opts.Addr, opts.Machine, opts.Dir)
 	return srv.ListenAndServe()
+}
+
+func sessionHandler(opts Options) http.HandlerFunc {
+	scanner := sessions.NewScanner(opts.Dir, opts.ActiveWindow)
+	claudeScanner := sessions.NewClaudeScanner(opts.ClaudeDir, opts.ActiveWindow)
+	return func(w http.ResponseWriter, r *http.Request) {
+		snap := sessions.MergeSnapshots(scanner.Poll(), claudeScanner.Poll())
+		snap.Machine = opts.Machine
+		writeJSON(w, http.StatusOK, snap)
+	}
 }
 
 func usagePollInterval(d time.Duration) time.Duration {

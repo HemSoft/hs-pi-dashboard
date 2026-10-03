@@ -1,4 +1,4 @@
-// hs-pi-dashboard aggregates pi coding-agent sessions across a Tailscale
+// hs-pi-dashboard aggregates Pi and Claude Code sessions across a Tailscale
 // fleet. One binary, two modes:
 //
 //	agent  – run on every machine with pi; watches ~/.pi/agent/sessions and
@@ -59,7 +59,7 @@ func usage() {
 	fmt.Print(`hs-pi-dashboard ` + version + ` — aggregate pi sessions across the Tailscale fleet
 
 Usage:
-  hs-pi-dashboard agent  [flags]   watch local pi sessions, serve JSON
+  hs-pi-dashboard agent  [flags]   watch local Pi and Claude Code sessions, serve JSON
   hs-pi-dashboard serve  [flags]   poll agents, serve the dashboard
   hs-pi-dashboard version
 
@@ -67,6 +67,7 @@ Agent flags:
   -addr string          listen address (default ":8787"; bind the Tailscale IP
                         to keep the agent off the LAN, e.g. 100.101.122.39:8787)
   -dir string           pi sessions dir (default ~/.pi/agent/sessions)
+  -claude-dir string    Claude Code projects dir (default ~/.claude/projects)
   -machine string       label reported in the snapshot (default hostname)
   -active-window dur    how long a quiet session counts as active (default 2m)
 
@@ -82,6 +83,7 @@ func runAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	addr := fs.String("addr", ":8787", "listen address")
 	dir := fs.String("dir", "", "pi sessions dir (default ~/.pi/agent/sessions)")
+	claudeDir := fs.String("claude-dir", "", "Claude Code projects dir (default ~/.claude/projects)")
 	machine := fs.String("machine", "", "label reported in the snapshot (default hostname)")
 	window := fs.Duration("active-window", 2*time.Minute, "how long a quiet session counts as active")
 	if err := fs.Parse(args); err != nil {
@@ -98,6 +100,7 @@ func runAgent(args []string) error {
 	return agent.Run(agent.Options{
 		Addr:         *addr,
 		Dir:          *dir,
+		ClaudeDir:    *claudeDir,
 		Machine:      label,
 		ActiveWindow: *window,
 	})

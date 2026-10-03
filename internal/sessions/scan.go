@@ -32,7 +32,7 @@ import (
 // still considered active.
 const DefaultActiveWindow = 2 * time.Minute
 
-// Summary is the dashboard-facing projection of one pi session file.
+// Summary is the dashboard-facing projection of one coding-agent session file.
 type Summary struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name,omitempty"`
@@ -83,13 +83,15 @@ type fileState struct {
 	size    int64
 	summary *Summary
 	partial []byte
+	claude  *claudeState
 }
 
-// Scanner incrementally summarizes every *.jsonl file below Dir.
+// Scanner incrementally summarizes JSONL session files below its directory.
 type Scanner struct {
 	dir          string
 	activeWindow time.Duration
 	now          func() time.Time
+	isClaude     bool
 
 	mu    sync.Mutex
 	files map[string]*fileState
@@ -122,14 +124,16 @@ func (s *Scanner) Poll() Snapshot {
 	var summaries []Summary
 
 	_ = filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && s.isClaude && d.IsDir() && d.Name() == "subagents" {
+			return filepath.SkipDir
+		}
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil //nolint:nilerr // unreadable entries are simply skipped
 		}
 		seen[path] = true
 		summary := s.pollFile(path, now)
-		// Subagent transcript artifacts also use .jsonl and live below the
-		// sessions tree, but they are not Pi session files. A real session
-		// header always supplies an id; omit anything without one.
+		// Transcript artifacts can also use .jsonl. Both parsers require
+		// a real session id before a file reaches the dashboard.
 		if summary.ID != "" {
 			summaries = append(summaries, summary)
 		}
@@ -143,6 +147,28 @@ func (s *Scanner) Poll() Snapshot {
 		}
 	}
 
+	return summarize(s.dir, now, summaries)
+}
+
+// MergeSnapshots combines agent sources under one shared inactive-history cap.
+// IDs from non-Pi sources are namespaced by their parser to avoid collisions.
+func MergeSnapshots(snapshots ...Snapshot) Snapshot {
+	var summaries []Summary
+	var dir string
+	var generatedAt time.Time
+	for _, snap := range snapshots {
+		if dir == "" {
+			dir = snap.SessionsDir
+		}
+		if snap.GeneratedAt.After(generatedAt) {
+			generatedAt = snap.GeneratedAt
+		}
+		summaries = append(summaries, snap.Sessions...)
+	}
+	return summarize(dir, generatedAt, summaries)
+}
+
+func summarize(dir string, now time.Time, summaries []Summary) Snapshot {
 	sort.Slice(summaries, func(i, j int) bool {
 		if summaries[i].Active != summaries[j].Active {
 			return summaries[i].Active
@@ -163,7 +189,7 @@ func (s *Scanner) Poll() Snapshot {
 
 	return Snapshot{
 		GeneratedAt:    now,
-		SessionsDir:    s.dir,
+		SessionsDir:    dir,
 		Sessions:       summaries,
 		ActiveSessions: activeSessions,
 	}
@@ -178,6 +204,7 @@ func (s *Scanner) pollFile(path string, now time.Time) Summary {
 	state, ok := s.files[path]
 	if !ok || info.Size() < state.size {
 		state = &fileState{summary: &Summary{}}
+		ok = false
 	}
 
 	if ok && state.size == info.Size() {
@@ -218,7 +245,11 @@ func (s *Scanner) pollFile(path string, now time.Time) Summary {
 		line := bytes.TrimSpace(lines[:idx])
 		lines = lines[idx+1:]
 		if len(line) > 0 {
-			applyEntry(state.summary, line)
+			if s.isClaude {
+				applyClaudeEntry(state, line)
+			} else {
+				applyEntry(state.summary, line)
+			}
 		}
 	}
 
