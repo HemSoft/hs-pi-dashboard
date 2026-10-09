@@ -1,6 +1,6 @@
 # hs-pi-dashboard
 
-[![CI](https://github.com/HemSoft/hs-pi-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HemSoft/hs-pi-dashboard/actions/workflows/ci.yml)
+[![CI](https://github.com/hemsoft-dev/hs-pi-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hemsoft-dev/hs-pi-dashboard/actions/workflows/ci.yml)
 
 A gold-on-black, fleet-wide dashboard for [pi](https://github.com/badlogic/pi-mono)
 coding-agent sessions across the Tailscale network, including Claude Code.
