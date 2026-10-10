@@ -118,3 +118,21 @@ test('Pulse counts working/waiting T3 rows and excludes offline or stale rows', 
     {online:true,sessions:[t3({active:true,status:'working'}),t3({active:true,status:'waiting'}),t3({status:'stale'})]},
     {online:false,sessions:[t3({active:true,status:'working'})]}],hermesSessions:[]}),2);
 });
+
+test('T3 notices identify and escape each configured environment path', () => {
+  const r=renderer();
+  const html=r.sessionsTable([{name:'mini',online:true,sessions:[],sources:[
+    {source:'t3',state:'unavailable',error:'unreadable',path:'/first/<unsafe>/state.sqlite'},
+    {source:'t3',state:'unavailable',error:'unreadable',path:'/second/state.sqlite'}]}],[]);
+  assert.match(html,/\/first\/&lt;unsafe&gt;\/state.sqlite/);
+  assert.match(html,/\/second\/state.sqlite/);
+});
+
+test('independent live Claude fallback identifies cached T3 statistics and unknown turn time', () => {
+  const r=renderer();
+  const html=r.sessionsTable([{name:'mini',online:true,sessions:[t3({active:true,status:'unavailable',activitySource:'claude-code'})]}],[]);
+  assert.match(html,/T3 unavailable/);
+  assert.match(html,/Claude transcript active/);
+  assert.match(html,/<b>statistics<\/b> cached T3/);
+  assert.match(html,/<b>turn<\/b> n\/a/);
+});

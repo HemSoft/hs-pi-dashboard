@@ -304,9 +304,11 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 			// A resumed T3 turn can retain an earlier completed_at value.
 			// The active turn identity / running state takes precedence.
 			row.Status = "working"
-			row.TurnCompletedAt = nil
 		}
 		if row.Status == "working" || row.Status == "waiting" {
+			if turnID != "" || turnState == "running" || turnState == "pending" {
+				row.TurnCompletedAt = nil
+			}
 			age := now.Sub(row.LastActivity)
 			row.Active = age >= 0 && age <= c.window
 			if !row.Active {

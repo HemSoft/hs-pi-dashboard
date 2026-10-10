@@ -64,7 +64,7 @@ func TestStatesAndThreadMetadata(t *testing.T) {
 	for _, id := range []string{"working", "waiting", "idle", "stopped", "error", "stale", "deleted", "archived", "without-session"} {
 		thread(t, db, id, now)
 	}
-	exec(t, db, `UPDATE projection_turns SET completed_at=? WHERE thread_id='working'`, now.Add(-time.Minute).Format(time.RFC3339Nano))
+	exec(t, db, `UPDATE projection_turns SET completed_at=? WHERE thread_id IN ('working','waiting')`, now.Add(-time.Minute).Format(time.RFC3339Nano))
 	exec(t, db, `UPDATE projection_threads SET pending_user_input_count=1 WHERE thread_id='waiting'`)
 	exec(t, db, `UPDATE projection_thread_sessions SET active_turn_id=NULL WHERE thread_id='idle'`)
 	exec(t, db, `UPDATE projection_turns SET state='completed', completed_at=? WHERE thread_id='idle'`, now.Add(10*time.Second).Format(time.RFC3339Nano))
@@ -89,6 +89,9 @@ func TestStatesAndThreadMetadata(t *testing.T) {
 		id := s.ID[len(c.prefix()):]
 		if s.Status != expected[id] || s.Name != "Thread "+id || s.Project != "fleet-repo" || s.Cwd != "/repos/fleet-repo" || s.Model != "gpt-test" || s.ThinkingLevel != "high" || s.MessageCount != 2 {
 			t.Fatalf("thread %s: %+v", id, s)
+		}
+		if (id == "working" || id == "waiting") && s.TurnCompletedAt != nil {
+			t.Fatal("resumed active turn retained its earlier completion")
 		}
 		if s.T3Usage != nil {
 			t.Fatal("invented usage")
@@ -220,7 +223,7 @@ func TestEveryThreadAndLiveRowSurviveHistoryCapAndDedup(t *testing.T) {
 	}
 	exec(t, db, `UPDATE projection_thread_sessions SET status='stopped'`)
 	merged = sessions.MergeSnapshots(transcript, c.Poll())
-	if len(merged.Sessions) != 46 || merged.ActiveSessions != 1 {
+	if len(merged.Sessions) != 46 || merged.ActiveSessions != 2 {
 		t.Fatalf("all quiet threads: %d/%d", len(merged.Sessions), merged.ActiveSessions)
 	}
 }

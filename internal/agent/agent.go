@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/HemSoft/hs-pi-dashboard/internal/herdr"
@@ -79,15 +80,29 @@ func sessionHandler(opts Options) http.HandlerFunc {
 			seen[path] = true
 		}
 	}
+	pollers := []func() sessions.Snapshot{scanner.Poll, claudeScanner.Poll}
+	for _, collector := range collectors {
+		pollers = append(pollers, collector.Poll)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		snaps := []sessions.Snapshot{scanner.Poll(), claudeScanner.Poll()}
-		for _, collector := range collectors {
-			snaps = append(snaps, collector.Poll())
-		}
+		snaps := pollSources(pollers)
 		snap := sessions.MergeSnapshots(snaps...)
 		snap.Machine = opts.Machine
 		writeJSON(w, http.StatusOK, snap)
 	}
+}
+
+// Poll sources together so multiple T3 environments share the same wall-clock
+// budget. Each T3 query has a 2.5s limit; the fleet request allows 3s.
+func pollSources(pollers []func() sessions.Snapshot) []sessions.Snapshot {
+	snapshots := make([]sessions.Snapshot, len(pollers))
+	var workers sync.WaitGroup
+	for i, poll := range pollers {
+		workers.Add(1)
+		go func() { defer workers.Done(); snapshots[i] = poll() }()
+	}
+	workers.Wait()
+	return snapshots
 }
 
 func usagePollInterval(d time.Duration) time.Duration {

@@ -99,7 +99,11 @@ not report that metric; zero remains zero. Context usage is separate from total
 processed tokens. Claude and Codex report different subsets, and these values are
 provider telemetry, not billing totals. T3 costs are unavailable. A native Claude
 transcript with the same T3 provider session/thread ID is excluded so the session
-and Pulse count once.
+and Pulse count once. Fresh native Claude output remains expandable on the T3 row.
+If T3 metadata is inactive or unavailable while the native transcript has fresh
+writes, the row explicitly says "Claude transcript active" and Pulse counts that
+independent activity once. Its T3 state remains visible, statistics are marked
+cached, and unavailable turn timing is not inferred from transcript lifetime.
 
 Configure each environment with a repeated flag, or disable collection explicitly:
 

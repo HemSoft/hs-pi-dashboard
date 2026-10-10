@@ -34,6 +34,7 @@ const DefaultActiveWindow = 2 * time.Minute
 
 // Summary is the dashboard-facing projection of one coding-agent session file.
 type Summary struct {
+	ActivitySource    string     `json:"activitySource,omitempty"`
 	Source            string     `json:"source,omitempty"`
 	Status            string     `json:"status,omitempty"`
 	ProviderSessionID string     `json:"providerSessionId,omitempty"`
@@ -186,6 +187,7 @@ func MergeSnapshots(snapshots ...Snapshot) Snapshot {
 	var summaries []Summary
 	var sources []SourceHealth
 	claudeIDs := map[string]bool{}
+	nativeClaude := map[string]Summary{}
 	var dir string
 	var generatedAt time.Time
 	for _, snap := range snapshots {
@@ -198,6 +200,9 @@ func MergeSnapshots(snapshots ...Snapshot) Snapshot {
 		summaries = append(summaries, snap.Sessions...)
 		sources = append(sources, snap.Sources...)
 		for _, row := range snap.Sessions {
+			if row.Provider == "claude-code" {
+				nativeClaude[row.ID] = row
+			}
 			if row.Source == "t3" && row.Provider == "claudeAgent" {
 				for _, id := range []string{row.ProviderSessionID, row.ProviderThreadID} {
 					if id != "" {
@@ -214,6 +219,25 @@ func MergeSnapshots(snapshots ...Snapshot) Snapshot {
 			continue
 		}
 		if row.Source == "t3" {
+			for _, id := range []string{row.ProviderSessionID, row.ProviderThreadID} {
+				if native, ok := nativeClaude["claude-code:"+id]; ok && row.Provider == "claudeAgent" {
+					// Keep T3 identity/state while preserving independent, fresh
+					// Claude activity and output. Cached T3 data itself stays idle.
+					row.Outputs = native.Outputs
+					if native.Active && !row.Active {
+						row.Active = true
+						row.ActivitySource = "claude-code"
+						row.TurnStartedAt, row.TurnCompletedAt = nil, nil
+					}
+					if native.LastActivity.After(row.LastActivity) {
+						row.LastActivity = native.LastActivity
+					}
+					if native.MessageCount > row.MessageCount {
+						row.MessageCount = native.MessageCount
+					}
+					break
+				}
+			}
 			if seenT3[row.ID] {
 				continue
 			}

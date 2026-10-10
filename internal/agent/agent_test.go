@@ -67,3 +67,33 @@ func TestT3FailureDoesNotBreakPiEndpoint(t *testing.T) {
 		t.Fatalf("independent sources: %+v", snap)
 	}
 }
+
+func TestSlowSourcesPollTogetherAndKeepTheirOwnResults(t *testing.T) {
+	started := make(chan int, 3)
+	release := make(chan struct{})
+	var pollers []func() sessions.Snapshot
+	for i := range 3 {
+		pollers = append(pollers, func() sessions.Snapshot {
+			started <- i
+			<-release
+			return sessions.Snapshot{Machine: []string{"Pi", "first T3", "second T3"}[i]}
+		})
+	}
+	done := make(chan []sessions.Snapshot, 1)
+	go func() { done <- pollSources(pollers) }()
+	for range 3 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("one slow source blocked independent source polls")
+		}
+	}
+	close(release)
+	results := <-done
+	for i, name := range []string{"Pi", "first T3", "second T3"} {
+		if results[i].Machine != name {
+			t.Fatalf("source ordering: %+v", results)
+		}
+	}
+}

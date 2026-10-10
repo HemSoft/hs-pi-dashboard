@@ -909,7 +909,7 @@ const sessionSig = (s) => {
   return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
     s.messageCount || 0, s.toolCallCount || 0, s.inputTokens || 0, s.outputTokens || 0,
     +(s.costUsd || 0).toFixed(4), !!s.active, s.lastActivity || "",
-    s.name || "", s.status || "", s.turnStartedAt || "", s.turnCompletedAt || "", JSON.stringify(s.t3Usage || null),
+    s.name || "", s.status || "", s.activitySource || "", s.turnStartedAt || "", s.turnCompletedAt || "", JSON.stringify(s.t3Usage || null),
     (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
@@ -1035,7 +1035,7 @@ function sessionsTable(machines, hermesSessions) {
   </div>` : "";
   const notices = (machines || []).flatMap((m) => (m.sources || [])
     .filter((source) => source.source === "t3" && (!m.online || source.state !== "healthy"))
-    .map((source) => `<li>${esc(m.name)} · T3 ${esc(m.online ? source.state : "offline")} · ${esc(m.online ? source.error || "Collection unavailable" : "Cached sessions; machine unreachable")}</li>`));
+    .map((source) => `<li>${esc(m.name)} · T3 ${esc(m.online ? source.state : "offline")} · ${esc(m.online ? source.error || "Collection unavailable" : "Cached sessions; machine unreachable")} · ${esc(source.path || "environment unknown")}</li>`));
   return `
   ${notices.length ? `<ul class="source-notices" aria-label="T3 collection status">${notices.join("")}</ul>` : ""}
   ${pager}
@@ -1072,7 +1072,7 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   return `
   <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}${isT3 ? `<span class="session-meta"><span class="session-state ${esc(m.online ? s.status : "unavailable")}">T3 ${esc(m.online ? s.status : "offline")}</span> · ${esc(s.project || "repository unknown")}</span>` : ""}</td>
+    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}${isT3 ? `<span class="session-meta"><span class="session-state ${esc(m.online ? s.status : "unavailable")}">T3 ${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}</span>` : ""}</td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
@@ -1098,6 +1098,7 @@ function t3Metrics(s, m, flash) {
   const count = (n) => Number.isFinite(n) && n >= 0 ? n.toLocaleString("en-US") : "n/a";
   const cls = (m.online ? "" : " offline") + (flash ? " flash" : "");
   const metrics = [
+    ...(s.activitySource === "claude-code" ? [["statistics", "cached T3"]] : []),
     ["tools", count(s.toolCallCount || 0)],
     ["in", count(u.inputTokens)], ["out", count(u.outputTokens)],
     ["total", count(u.totalTokens)], ["cache", count(u.cacheReadTokens)],
