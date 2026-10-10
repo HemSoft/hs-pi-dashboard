@@ -158,3 +158,31 @@ func TestServerKeepsStaleSessionsWhenAgentFails(t *testing.T) {
 		t.Fatalf("stale sessions not retained: %+v", state.Sessions)
 	}
 }
+
+func TestT3SourceHealthSurvivesRepeatedOfflinePolls(t *testing.T) {
+	fail := false
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"sessions":[{"id":"t3:one","source":"t3","active":true}],"activeSessions":1,"sources":[{"source":"t3","state":"unavailable","error":"locked"}]}`))
+	}))
+	defer agent.Close()
+	server := NewServer([]Target{{Name: "mini", URL: agent.URL}}, time.Hour)
+	server.poll(context.Background())
+	if server.cache["mini"].Sources[0].Error != "locked" {
+		t.Fatal("source health lost")
+	}
+	fail = true
+	for range 2 {
+		server.poll(context.Background())
+		state := server.cache["mini"]
+		if state.Online || state.ActiveSessions != 0 || len(state.Sessions) != 1 || len(state.Sources) != 1 {
+			t.Fatalf("cached offline T3: %+v", state)
+		}
+		if activeSessionCount([]MachineState{state}, 0) != 0 {
+			t.Fatal("offline T3 counted in Pulse")
+		}
+	}
+}

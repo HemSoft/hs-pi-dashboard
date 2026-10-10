@@ -34,26 +34,56 @@ const DefaultActiveWindow = 2 * time.Minute
 
 // Summary is the dashboard-facing projection of one coding-agent session file.
 type Summary struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name,omitempty"`
-	Cwd           string    `json:"cwd,omitempty"`
-	Project       string    `json:"project,omitempty"`
-	StartedAt     time.Time `json:"startedAt"`
-	LastActivity  time.Time `json:"lastActivity"`
-	Active        bool      `json:"active"`
-	MessageCount  int       `json:"messageCount"`
-	Provider      string    `json:"provider,omitempty"`
-	Model         string    `json:"model,omitempty"`
-	ThinkingLevel string    `json:"thinkingLevel,omitempty"`
-	InputTokens   int64     `json:"inputTokens"`
-	OutputTokens  int64     `json:"outputTokens"`
-	TotalTokens   int64     `json:"totalTokens"`
-	CostUSD       float64   `json:"costUsd"`
-	FirstPrompt   string    `json:"firstPrompt,omitempty"`
+	ActivitySource    string     `json:"activitySource,omitempty"`
+	Source            string     `json:"source,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	ProviderSessionID string     `json:"providerSessionId,omitempty"`
+	ProviderThreadID  string     `json:"providerThreadId,omitempty"`
+	ToolCallCount     int        `json:"toolCallCount,omitempty"`
+	TurnStartedAt     *time.Time `json:"turnStartedAt,omitempty"`
+	TurnCompletedAt   *time.Time `json:"turnCompletedAt,omitempty"`
+	T3Usage           *T3Usage   `json:"t3Usage,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name,omitempty"`
+	Cwd               string     `json:"cwd,omitempty"`
+	Project           string     `json:"project,omitempty"`
+	StartedAt         time.Time  `json:"startedAt"`
+	LastActivity      time.Time  `json:"lastActivity"`
+	Active            bool       `json:"active"`
+	MessageCount      int        `json:"messageCount"`
+	Provider          string     `json:"provider,omitempty"`
+	Model             string     `json:"model,omitempty"`
+	ThinkingLevel     string     `json:"thinkingLevel,omitempty"`
+	InputTokens       int64      `json:"inputTokens"`
+	OutputTokens      int64      `json:"outputTokens"`
+	TotalTokens       int64      `json:"totalTokens"`
+	CostUSD           float64    `json:"costUsd"`
+	FirstPrompt       string     `json:"firstPrompt,omitempty"`
 
 	// Outputs are the session's most recent visible agent texts, newest
 	// first and capped at maxOutputs. Thinking and tool calls never count.
 	Outputs []Output `json:"outputs,omitempty"`
+}
+
+// T3Usage holds the latest provider-reported counters. Nil means unreported,
+// including when a provider reports only context size, not cumulative usage.
+type T3Usage struct {
+	InputTokens     *int64 `json:"inputTokens"`
+	OutputTokens    *int64 `json:"outputTokens"`
+	TotalTokens     *int64 `json:"totalTokens"`
+	CacheReadTokens *int64 `json:"cacheReadTokens"`
+	ReasoningTokens *int64 `json:"reasoningTokens"`
+	ContextTokens   *int64 `json:"contextTokens"`
+	ContextLimit    *int64 `json:"contextLimit"`
+}
+
+// SourceHealth exposes collection failures independently of other sources.
+type SourceHealth struct {
+	Source        string    `json:"source"`
+	Path          string    `json:"path"`
+	State         string    `json:"state"`
+	Error         string    `json:"error,omitempty"`
+	LastSuccessAt time.Time `json:"lastSuccessAt,omitempty"`
 }
 
 // Output is one assistant text turn, kept as it was emitted (newlines and
@@ -72,11 +102,12 @@ const maxReportedSessions = 20
 
 // Snapshot is what the agent endpoint returns for one machine.
 type Snapshot struct {
-	Machine        string    `json:"machine"`
-	GeneratedAt    time.Time `json:"generatedAt"`
-	SessionsDir    string    `json:"sessionsDir"`
-	Sessions       []Summary `json:"sessions"`
-	ActiveSessions int       `json:"activeSessions"`
+	Sources        []SourceHealth `json:"sources,omitempty"`
+	Machine        string         `json:"machine"`
+	GeneratedAt    time.Time      `json:"generatedAt"`
+	SessionsDir    string         `json:"sessionsDir"`
+	Sessions       []Summary      `json:"sessions"`
+	ActiveSessions int            `json:"activeSessions"`
 }
 
 type fileState struct {
@@ -154,6 +185,9 @@ func (s *Scanner) Poll() Snapshot {
 // IDs from non-Pi sources are namespaced by their parser to avoid collisions.
 func MergeSnapshots(snapshots ...Snapshot) Snapshot {
 	var summaries []Summary
+	var sources []SourceHealth
+	claudeIDs := map[string]bool{}
+	nativeClaude := map[string]Summary{}
 	var dir string
 	var generatedAt time.Time
 	for _, snap := range snapshots {
@@ -164,8 +198,56 @@ func MergeSnapshots(snapshots ...Snapshot) Snapshot {
 			generatedAt = snap.GeneratedAt
 		}
 		summaries = append(summaries, snap.Sessions...)
+		sources = append(sources, snap.Sources...)
+		for _, row := range snap.Sessions {
+			if row.Provider == "claude-code" {
+				nativeClaude[row.ID] = row
+			}
+			if row.Source == "t3" && row.Provider == "claudeAgent" {
+				for _, id := range []string{row.ProviderSessionID, row.ProviderThreadID} {
+					if id != "" {
+						claudeIDs["claude-code:"+id] = true
+					}
+				}
+			}
+		}
 	}
-	return summarize(dir, generatedAt, summaries)
+	unique := summaries[:0]
+	seenT3 := map[string]bool{}
+	for _, row := range summaries {
+		if row.Provider == "claude-code" && claudeIDs[row.ID] {
+			continue
+		}
+		if row.Source == "t3" {
+			for _, id := range []string{row.ProviderSessionID, row.ProviderThreadID} {
+				if native, ok := nativeClaude["claude-code:"+id]; ok && row.Provider == "claudeAgent" {
+					// Keep T3 identity/state while preserving independent, fresh
+					// Claude activity and output. Cached T3 data itself stays idle.
+					row.Outputs = native.Outputs
+					if native.Active && !row.Active {
+						row.Active = true
+						row.ActivitySource = "claude-code"
+						row.TurnStartedAt, row.TurnCompletedAt = nil, nil
+					}
+					if native.LastActivity.After(row.LastActivity) {
+						row.LastActivity = native.LastActivity
+					}
+					if native.MessageCount > row.MessageCount {
+						row.MessageCount = native.MessageCount
+					}
+					break
+				}
+			}
+			if seenT3[row.ID] {
+				continue
+			}
+			seenT3[row.ID] = true
+		}
+		unique = append(unique, row)
+	}
+	out := summarize(dir, generatedAt, unique)
+	out.Sources = sources
+	return out
 }
 
 func summarize(dir string, now time.Time, summaries []Summary) Snapshot {
@@ -182,15 +264,23 @@ func summarize(dir string, now time.Time, summaries []Summary) Snapshot {
 			activeSessions++
 		}
 	}
-	reportedSessions := activeSessions + maxReportedSessions
-	if len(summaries) > reportedSessions {
-		summaries = summaries[:reportedSessions]
+	// Keep every T3 thread, including quiet sessions without assistant output.
+	// The existing history cap applies only to inactive transcript rows.
+	reported := summaries[:0]
+	inactive := 0
+	for _, row := range summaries {
+		if row.Active || row.Source == "t3" || inactive < maxReportedSessions {
+			reported = append(reported, row)
+		}
+		if !row.Active && row.Source != "t3" {
+			inactive++
+		}
 	}
 
 	return Snapshot{
 		GeneratedAt:    now,
 		SessionsDir:    dir,
-		Sessions:       summaries,
+		Sessions:       reported,
 		ActiveSessions: activeSessions,
 	}
 }
@@ -474,7 +564,11 @@ func projectName(cwd string) string {
 		filepath.Clean(cwd) == filepath.Clean(home) {
 		return "~"
 	}
-	return filepath.Base(cwd)
+	parts := strings.FieldsFunc(cwd, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) == 0 {
+		return filepath.Base(cwd)
+	}
+	return parts[len(parts)-1]
 }
 
 // parseTimestamp accepts the shapes pi writes: RFC3339 strings and

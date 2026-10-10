@@ -30,16 +30,17 @@ type Target struct {
 
 // MachineState is the aggregated view of one machine.
 type MachineState struct {
-	Name           string             `json:"name"`
-	URL            string             `json:"url"`
-	Online         bool               `json:"online"`
-	Error          string             `json:"error,omitempty"`
-	GeneratedAt    time.Time          `json:"generatedAt"`
-	Sessions       []sessions.Summary `json:"sessions"`
-	ActiveSessions int                `json:"activeSessions"`
-	Usage          *usage.Snapshot    `json:"usage,omitempty"`
-	Herdr          *herdr.Snapshot    `json:"herdr,omitempty"`
-	TerminalURL    string             `json:"terminalUrl,omitempty"`
+	Sources        []sessions.SourceHealth `json:"sources,omitempty"`
+	Name           string                  `json:"name"`
+	URL            string                  `json:"url"`
+	Online         bool                    `json:"online"`
+	Error          string                  `json:"error,omitempty"`
+	GeneratedAt    time.Time               `json:"generatedAt"`
+	Sessions       []sessions.Summary      `json:"sessions"`
+	ActiveSessions int                     `json:"activeSessions"`
+	Usage          *usage.Snapshot         `json:"usage,omitempty"`
+	Herdr          *herdr.Snapshot         `json:"herdr,omitempty"`
+	TerminalURL    string                  `json:"terminalUrl,omitempty"`
 }
 
 // FleetSnapshot is the dashboard-facing aggregation of all machines.
@@ -199,6 +200,7 @@ func (s *Server) fetch(ctx context.Context, t Target) MachineState {
 	state.Online = true
 	state.GeneratedAt = snap.GeneratedAt
 	state.Sessions = snap.Sessions
+	state.Sources = snap.Sources
 	state.ActiveSessions = snap.ActiveSessions
 	// Agents deployed before activeSessions was added still report enough data
 	// for an accurate count up to their 20-row display cap.
@@ -217,8 +219,9 @@ func (s *Server) fetch(ctx context.Context, t Target) MachineState {
 func (s *Server) mergeStale(state MachineState) MachineState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if prev, ok := s.cache[state.Name]; ok && prev.Online {
+	if prev, ok := s.cache[state.Name]; ok {
 		state.Sessions = prev.Sessions
+		state.Sources = prev.Sources
 		state.GeneratedAt = prev.GeneratedAt
 	}
 	return state

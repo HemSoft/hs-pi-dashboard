@@ -3,7 +3,8 @@
 [![CI](https://github.com/hemsoft-dev/hs-pi-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hemsoft-dev/hs-pi-dashboard/actions/workflows/ci.yml)
 
 A gold-on-black, fleet-wide dashboard for [pi](https://github.com/badlogic/pi-mono)
-coding-agent sessions across the Tailscale network, including Claude Code.
+coding-agent sessions across the Tailscale network, including Claude Code and
+[T3 Code](https://github.com/pingdotgg/t3code).
 One Go binary, two modes:
 
 ```text
@@ -30,7 +31,8 @@ tmux are not included in this monitor; session history and Pulse remain separate
 The session table shows each machine, project, provider, model, thinking level,
 message count, cost, start time, and duration. Active sessions remain visible
 before they produce assistant text and flash when their state changes;
-completed sessions without output stay hidden. Rebooted machines keep their
+completed transcript sessions without output stay hidden. T3 threads stay
+visible even without output, with their thread title, repository and state. Rebooted machines keep their
 last known sessions grayed out.
 
 Above the session grid sits an expandable/collapsible **Usage & Balances**
@@ -42,7 +44,7 @@ agent refreshes usage
 every 60s (endpoint `GET /usage`), the server folds it into `/api/fleet`, and
 the gauges read `100 - used_percent` so full-bleed windows read zero.
 
-The expandable **Pulse** monitor counts recently active Pi, Claude Code, and Hermes sessions
+The expandable **Pulse** monitor counts recently active Pi, Claude Code, T3 and Hermes sessions
 across the fleet. Pulse and the table use one fleet snapshot, and every counted
 active session remains in the row payload even beyond the inactive-history cap.
 Its green trace moves continuously to a live cursor at 75% of the monitor
@@ -72,6 +74,66 @@ Activity uses the same recent-write window as Pi, not process liveness. A quiet
 session stops counting after two minutes by default. Claude transcript records
 do not provide dollar costs, so their price cells stay blank. No subscription
 balance is inferred. Future Pi streaming support would use an extension.
+
+## T3 Code collection
+
+Each agent reads `~/.t3/userdata/state.sqlite` in SQLite read-only mode. It collects
+all non-deleted threads across every project in that environment, including closed
+tabs and archived history. T3 rows remain in the payload beyond the transcript
+history cap; the table paginates them. No T3 plugin, agent tool call or open tab is
+required. The collector reads metadata, turn timing and provider counters without
+reading prompt text or displaying tool payloads.
+
+This collector supports T3's V1 projections. If `statev2.sqlite` appears in the
+default environment, it reports Orchestrator V2 as unsupported rather than
+silently reading the now-independent legacy database. Explicit V2 databases are
+also detected and reported unavailable. V2 collection requires a separate schema
+adapter. To intentionally monitor a V1 instance alongside V2, configure its
+`state.sqlite` path explicitly with `-t3-db`.
+
+T3 rows show connecting, working, waiting for approval/input, idle, stopped or error state.
+Pulse counts connecting, working and waiting threads only while their recorded activity is
+within `-active-window`, two minutes by default. A connected provider with no
+active turn is idle. This is recent recorded activity, not a process heartbeat:
+a quiet long-running tool can become stale even while T3 is running. Stale threads
+stay visible with a warning and do not count as live. Duration uses the latest turn,
+not the lifetime of the thread.
+
+The statistics line shows distinct tool calls and the latest reported input,
+output, total, cache, reasoning and context counters. Repeated cumulative snapshots
+replace previous counters rather than adding to them. `n/a` means the provider did
+not report that metric; zero remains zero. Context usage is separate from total
+processed tokens. Claude and Codex report different subsets, and these values are
+provider telemetry, not billing totals. T3 costs are unavailable. A native Claude
+transcript with the same T3 provider session/thread ID is excluded so the session
+and Pulse count once. Fresh native Claude output remains expandable on the T3 row.
+If T3 metadata is inactive or unavailable while the native transcript has fresh
+writes, the row explicitly says "Claude transcript active" and Pulse counts that
+independent activity once. Its T3 state remains visible, statistics are marked
+cached, and unavailable turn timing is not inferred from transcript lifetime.
+
+Configure each environment with a repeated flag, or disable collection explicitly:
+
+```bash
+./hs-pi-dashboard agent -addr <tailscale-ip>:8787 -t3-db /path/to/userdata/state.sqlite
+./hs-pi-dashboard agent -addr <tailscale-ip>:8787 -t3-db /first/state.sqlite -t3-db /second/state.sqlite
+./hs-pi-dashboard agent -addr <tailscale-ip>:8787 -t3-db off
+```
+
+Missing, locked or incompatible databases produce a visible T3 collection warning
+without breaking Pi collection. Cached metadata remains visible but never counts
+as live. Collection retries on each poll and recovers when the database is readable
+again. It never creates a missing database. Thread IDs include the environment path
+so independent environments cannot collide. T3's SQLite projections are an internal
+interface; schema changes may require a dashboard update.
+
+For fleet rollout, build all OS targets from the same reviewed revision with
+`python deploy/build_fleet.py`, then replace and restart **every dashboard agent**
+and Mini's dashboard server with that build. Configure database paths on the machine
+that owns each T3 environment, under the user account that can read its userdata.
+Check each agent's `/sessions` source health and the dashboard's `/api/fleet` payload.
+The dashboard can be opened in T3's browser panel as an ordinary page. Merge and
+fleet installation are separate from implementing this collector.
 
 ## Build
 

@@ -59,7 +59,7 @@ func usage() {
 	fmt.Print(`hs-pi-dashboard ` + version + ` — aggregate pi sessions across the Tailscale fleet
 
 Usage:
-  hs-pi-dashboard agent  [flags]   watch local Pi and Claude Code sessions, serve JSON
+  hs-pi-dashboard agent  [flags]   watch local Pi, Claude Code and T3 sessions, serve JSON
   hs-pi-dashboard serve  [flags]   poll agents, serve the dashboard
   hs-pi-dashboard version
 
@@ -68,6 +68,8 @@ Agent flags:
                         to keep the agent off the LAN, e.g. 100.101.122.39:8787)
   -dir string           pi sessions dir (default ~/.pi/agent/sessions)
   -claude-dir string    Claude Code projects dir (default ~/.claude/projects)
+  -t3-db string         T3 SQLite path (default ~/.t3/userdata/state.sqlite);
+                        repeat for multiple environments, "off" disables
   -machine string       label reported in the snapshot (default hostname)
   -active-window dur    how long a quiet session counts as active (default 2m)
   -herdr-bin string     installed Herdr executable (default auto-discover)
@@ -85,6 +87,11 @@ func runAgent(args []string) error {
 	addr := fs.String("addr", ":8787", "listen address")
 	dir := fs.String("dir", "", "pi sessions dir (default ~/.pi/agent/sessions)")
 	claudeDir := fs.String("claude-dir", "", "Claude Code projects dir (default ~/.claude/projects)")
+	var t3DBs []string
+	fs.Func("t3-db", "T3 SQLite database; repeat for multiple environments, off disables", func(path string) error {
+		t3DBs = append(t3DBs, path)
+		return nil
+	})
 	machine := fs.String("machine", "", "label reported in the snapshot (default hostname)")
 	window := fs.Duration("active-window", 2*time.Minute, "how long a quiet session counts as active")
 	herdrBin := fs.String("herdr-bin", "", "installed Herdr executable (default auto-discover)")
@@ -103,6 +110,7 @@ func runAgent(args []string) error {
 		Addr:         *addr,
 		Dir:          *dir,
 		ClaudeDir:    *claudeDir,
+		T3DBs:        t3DBs,
 		Machine:      label,
 		ActiveWindow: *window,
 		HerdrBinary:  *herdrBin,

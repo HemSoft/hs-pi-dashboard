@@ -205,6 +205,31 @@
   .pager-btn:disabled { opacity: .35; cursor: default; }
   .pager-count { margin-left: auto; }
   .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
+  .session-table .session-meta { display: block; margin-top: 4px; color: var(--text); font-size: 10px; font-weight: 400; }
+  .session-table .t3-title { white-space: normal; overflow-wrap: anywhere; }
+  .session-state { color: var(--muted); }
+  .session-state.working { color: #7ce3a3; }
+  .session-state.waiting, .session-state.connecting { color: var(--gold); }
+  .session-state.error, .session-state.stale, .session-state.unavailable { color: #ffab91; }
+  .session-table .t3-details td { padding-top: 0; white-space: normal; }
+  .t3-metrics { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--text); font-size: 10px; line-height: 1.6; }
+  .t3-metrics span { white-space: nowrap; }
+  .t3-metrics b { font-weight: 400; color: var(--muted); }
+  .source-notices { list-style: none; margin-bottom: 10px; color: #ffab91; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  @media (max-width: 680px) {
+    .session-table th:nth-child(3), .session-table td:nth-child(3),
+    .session-table th:nth-child(5), .session-table td:nth-child(5),
+    .session-table th:nth-child(6), .session-table td:nth-child(6),
+    .session-table th:nth-child(7), .session-table td:nth-child(7),
+    .session-table th:nth-child(8), .session-table td:nth-child(8),
+    .session-table th:nth-child(9), .session-table td:nth-child(9) { display: none; }
+    .session-table th:nth-child(1), .session-table td:nth-child(1) { width: 20%; }
+    .session-table th:nth-child(2), .session-table td:nth-child(2) { width: 50%; }
+    .session-table th:nth-child(4), .session-table td:nth-child(4) { width: 30%; }
+    .session-table td { padding: 6px; }
+    .session-table .t3-details td { width: auto; }
+    .t3-metrics { gap: 3px 12px; }
+  }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: pulse 1.5s infinite; flex: none; }
   .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex: none; }
   .empty-line { color: var(--muted); font-size: 12px; font-style: italic; padding: 4px 0 8px; }
@@ -884,6 +909,7 @@ const sessionSig = (s) => {
   return [s.id, project, s.provider || "", s.model || "", s.thinkingLevel || "",
     s.messageCount || 0, s.toolCallCount || 0, s.inputTokens || 0, s.outputTokens || 0,
     +(s.costUsd || 0).toFixed(4), !!s.active, s.lastActivity || "",
+    s.name || "", s.status || "", s.activitySource || "", s.turnStartedAt || "", s.turnCompletedAt || "", JSON.stringify(s.t3Usage || null),
     (s.outputs || []).map((o) => o.at).join(",")].join("|");
 };
 let lastSigs = {};
@@ -978,7 +1004,7 @@ function sessionsTable(machines, hermesSessions) {
   // Active work belongs in the table before it has produced assistant text.
   // Completed quiet runs stay hidden, and rows without output have no chevron.
   const visible = flat.filter((entry) =>
-    entryIsLive(entry) || (entry.s.outputs || []).length > 0);
+    entry.s.source === "t3" || entryIsLive(entry) || (entry.s.outputs || []).length > 0);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
   const pageItems = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -1007,7 +1033,11 @@ function sessionsTable(machines, hermesSessions) {
     <button class="pager-btn" data-page="next" ${currentPage >= totalPages ? "disabled" : ""}>›</button>
     <span class="pager-count">${visible.length} sessions</span>
   </div>` : "";
+  const notices = (machines || []).flatMap((m) => (m.sources || [])
+    .filter((source) => source.source === "t3" && (!m.online || source.state !== "healthy"))
+    .map((source) => `<li>${esc(m.name)} · T3 ${esc(m.online ? source.state : "offline")} · ${esc(m.online ? source.error || "Collection unavailable" : "Cached sessions; machine unreachable")} · ${esc(source.path || "environment unknown")}</li>`));
   return `
+  ${notices.length ? `<ul class="source-notices" aria-label="T3 collection status">${notices.join("")}</ul>` : ""}
   ${pager}
   <div class="session-table-wrap">
     <table class="session-table">
@@ -1023,7 +1053,8 @@ function sessionsTable(machines, hermesSessions) {
 
 function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   const live = kind === "pi" ? (s.active && m.online) : s.active;
-  const session = s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
+  const isT3 = s.source === "t3";
+  const session = (isT3 && s.name) || s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
   const provider = s.provider || "";
   const model = s.model || "";
   const effort = s.thinkingLevel || "";
@@ -1031,17 +1062,17 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   // Started shown as a compact age (same format as duration); the exact
   // timestamp stays in the cell tooltip.
   const started = s.startedAt ? compactDur(Date.now() - new Date(s.startedAt).getTime()) : "";
-  const dur = durationOf(s);
-  const price = s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
+  const dur = isT3 ? t3TurnDuration(s, m.online) : durationOf({ ...s, active: live });
+  const price = isT3 ? "n/a" : s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
   // avail = fresh output exists (chevron + clickable); expandedNow = the
   // detail rows are actually rendered right now (border drops, chevron opens).
-  const cls = (live ? "active" : "offline") + (flash ? " flash" : "")
+  const cls = (live ? "active" : (isT3 && m.online ? "idle" : "offline")) + (flash ? " flash" : "")
     + (expandedNow ? " has-sub" : "") + (avail ? " toggleable" : "");
   const attrs = avail ? ` class="${cls}" data-skey="${esc(key)}"` : ` class="${cls}"`;
   return `
   <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}</td>
+    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}${isT3 ? `<span class="session-meta"><span class="session-state ${esc(m.online ? s.status : "unavailable")}">T3 ${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}</span>` : ""}</td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
@@ -1049,7 +1080,33 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
     <td title="${esc(s.startedAt || "")}">${esc(started)}</td>
     <td>${price}</td>
     <td>${esc(dur)}</td>
-  </tr>`;
+  </tr>${isT3 ? t3Metrics(s, m, flash) : ""}`;
+}
+
+function t3TurnDuration(s, online) {
+  if (!s.turnStartedAt) return "n/a";
+  const start = new Date(s.turnStartedAt).getTime();
+  const end = s.turnCompletedAt ? new Date(s.turnCompletedAt).getTime()
+    : (online && s.active ? Date.now() : new Date(s.lastActivity).getTime());
+  const ms = end - start;
+  if (!Number.isFinite(ms) || ms < 0) return "n/a";
+  return ms < 60000 ? Math.floor(ms / 1000) + "s" : compactDur(ms);
+}
+
+function t3Metrics(s, m, flash) {
+  const u = s.t3Usage || {};
+  const count = (n) => Number.isFinite(n) && n >= 0 ? n.toLocaleString("en-US") : "n/a";
+  const cls = (m.online ? "" : " offline") + (flash ? " flash" : "");
+  const metrics = [
+    ...(s.activitySource === "claude-code" ? [["statistics", "cached T3"]] : []),
+    ["tools", count(s.toolCallCount || 0)],
+    ["in", count(u.inputTokens)], ["out", count(u.outputTokens)],
+    ["total", count(u.totalTokens)], ["cache", count(u.cacheReadTokens)],
+    ["reasoning", count(u.reasoningTokens)],
+    ["context", count(u.contextTokens) + " / " + count(u.contextLimit)],
+    ["turn", t3TurnDuration(s, m.online)],
+  ];
+  return `<tr class="t3-details${cls}"><td colspan="9"><div class="t3-metrics" aria-label="T3 reported statistics">${metrics.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div></td></tr>`;
 }
 
 let lastHermes = [];
