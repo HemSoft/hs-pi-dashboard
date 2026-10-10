@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,5 +278,77 @@ func TestLegacyAndCurrentModelOptionsCoexist(t *testing.T) {
 		if s.Name != "Thread missing" && s.ThinkingLevel != "high" {
 			t.Fatalf("model options: %+v", s)
 		}
+	}
+}
+
+func TestStartingSessionsUsePendingRequestAndBecomeStale(t *testing.T) {
+	db, c, now := fixture(t)
+	thread(t, db, "starting", now.Add(-2*time.Minute))
+	exec(t, db, `UPDATE projection_thread_sessions SET status='starting',active_turn_id=NULL WHERE thread_id='starting'`)
+	exec(t, db, `UPDATE projection_turns SET state='completed',completed_at=? WHERE thread_id='starting'`, now.Add(-2*time.Minute).Format(time.RFC3339Nano))
+	requested := now.Add(-10 * time.Second)
+	exec(t, db, `INSERT INTO projection_turns VALUES('starting',NULL,'pending',NULL,?,NULL)`, requested.Format(time.RFC3339Nano))
+	snap := c.Poll()
+	if len(snap.Sessions) != 1 || snap.ActiveSessions != 1 || snap.Sessions[0].Status != "connecting" || snap.Sessions[0].TurnStartedAt == nil || !snap.Sessions[0].TurnStartedAt.Equal(requested) || snap.Sessions[0].TurnCompletedAt != nil {
+		t.Fatalf("connecting snapshot: %+v", snap)
+	}
+	c.now = func() time.Time { return now.Add(2 * time.Minute) }
+	snap = c.Poll()
+	if snap.ActiveSessions != 0 || snap.Sessions[0].Status != "stale" {
+		t.Fatalf("stalled startup: %+v", snap)
+	}
+}
+
+func TestStartingWithoutPendingTurnDoesNotReuseCompletedTiming(t *testing.T) {
+	db, c, now := fixture(t)
+	thread(t, db, "starting", now)
+	exec(t, db, `UPDATE projection_thread_sessions SET status='starting',active_turn_id=NULL WHERE thread_id='starting'`)
+	exec(t, db, `UPDATE projection_turns SET state='completed',completed_at=?`, now.Format(time.RFC3339Nano))
+	snap := c.Poll()
+	s := snap.Sessions[0]
+	if !s.Active || s.Status != "connecting" || s.TurnStartedAt != nil || s.TurnCompletedAt != nil {
+		t.Fatalf("startup: %+v", s)
+	}
+}
+
+func TestDefaultDetectsV2OnUpgradeAndNeverFallsBackToFrozenV1(t *testing.T) {
+	db, c, now := fixture(t)
+	c.defaultPath = true
+	thread(t, db, "v1", now)
+	if c.Poll().ActiveSessions != 1 {
+		t.Fatal("V1 unavailable before upgrade")
+	}
+	v2path := filepath.Join(filepath.Dir(c.path), "statev2.sqlite")
+	v2 := createDB(t, v2path)
+	exec(t, v2, `CREATE TABLE orchestration_v2_projection_threads(thread_id TEXT)`)
+	snap := c.Poll()
+	if snap.ActiveSessions != 0 || snap.Sources[0].State != "unavailable" || snap.Sources[0].Path != v2path || !strings.Contains(snap.Sources[0].Error, "V2") || snap.Sessions[0].Status != "unavailable" {
+		t.Fatalf("upgrade: %+v", snap)
+	}
+	// An explicitly selected legacy environment remains independently monitorable.
+	explicit := New(filepath.Join(filepath.Dir(v2path), "state.sqlite"), time.Minute)
+	explicit.now = c.now
+	if explicit.Poll().ActiveSessions != 1 {
+		t.Fatal("explicit V1 instance lost")
+	}
+	// Removing the V2 source must not silently re-enable the frozen legacy file.
+	if err := v2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(v2path); err != nil {
+		t.Fatal(err)
+	}
+	if snap = c.Poll(); snap.ActiveSessions != 0 || snap.Sources[0].Path != v2path || snap.Sources[0].State != "unavailable" {
+		t.Fatalf("V2 disappearance: %+v", snap)
+	}
+}
+
+func TestExplicitV2WithLegacyTablesIsUnsupported(t *testing.T) {
+	db, c, now := fixture(t)
+	thread(t, db, "legacy-copy", now)
+	exec(t, db, `CREATE TABLE orchestration_v2_projection_threads(thread_id TEXT)`)
+	snap := c.Poll()
+	if snap.ActiveSessions != 0 || len(snap.Sessions) != 0 || snap.Sources[0].State != "unavailable" || !strings.Contains(snap.Sources[0].Error, "V2") {
+		t.Fatalf("explicit V2: %+v", snap)
 	}
 }

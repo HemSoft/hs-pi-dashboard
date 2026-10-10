@@ -84,8 +84,15 @@ history cap; the table paginates them. No T3 plugin, agent tool call or open tab
 required. The collector reads metadata, turn timing and provider counters without
 reading prompt text or displaying tool payloads.
 
-T3 rows show working, waiting for approval/input, idle, stopped or error state.
-Pulse counts working and waiting threads only while their recorded activity is
+This collector supports T3's V1 projections. If `statev2.sqlite` appears in the
+default environment, it reports Orchestrator V2 as unsupported rather than
+silently reading the now-independent legacy database. Explicit V2 databases are
+also detected and reported unavailable. V2 collection requires a separate schema
+adapter. To intentionally monitor a V1 instance alongside V2, configure its
+`state.sqlite` path explicitly with `-t3-db`.
+
+T3 rows show connecting, working, waiting for approval/input, idle, stopped or error state.
+Pulse counts connecting, working and waiting threads only while their recorded activity is
 within `-active-window`, two minutes by default. A connected provider with no
 active turn is idle. This is recent recorded activity, not a process heartbeat:
 a quiet long-running tool can become stale even while T3 is running. Stale threads

@@ -21,14 +21,15 @@ import (
 
 // Collector owns the incremental activity cache for one T3 environment.
 type Collector struct {
-	path       string
-	window     time.Duration
-	now        func() time.Time
-	mu         sync.Mutex
-	file       os.FileInfo
-	rowID      int64
-	activities map[string]*activity
-	last       sessions.Snapshot
+	path        string
+	defaultPath bool
+	window      time.Duration
+	now         func() time.Time
+	mu          sync.Mutex
+	file        os.FileInfo
+	rowID       int64
+	activities  map[string]*activity
+	last        sessions.Snapshot
 }
 
 type activity struct {
@@ -40,6 +41,7 @@ type activity struct {
 // New uses the default T3 userdata path when path is empty. Each configured
 // environment gets its own collector and namespaced thread identities.
 func New(path string, window time.Duration) *Collector {
+	defaultPath := path == ""
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, ".t3", "userdata", "state.sqlite")
@@ -54,7 +56,7 @@ func New(path string, window time.Duration) *Collector {
 	if window <= 0 {
 		window = sessions.DefaultActiveWindow
 	}
-	return &Collector{path: path, window: window, now: time.Now, activities: map[string]*activity{}}
+	return &Collector{path: path, defaultPath: defaultPath, window: window, now: time.Now, activities: map[string]*activity{}}
 }
 
 // Poll reads a consistent projection snapshot. A failed source retains cached
@@ -63,6 +65,14 @@ func (c *Collector) Poll() sessions.Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
+	if c.defaultPath {
+		// V2 copies the legacy database once; the files then evolve independently.
+		// Never present that frozen V1 copy as the default live environment.
+		v2 := filepath.Join(filepath.Dir(c.path), "statev2.sqlite")
+		if _, err := os.Stat(v2); err == nil || !os.IsNotExist(err) {
+			c.path = v2
+		}
+	}
 	info, err := os.Stat(c.path)
 	if err != nil {
 		return c.unavailable(now, "T3 database unavailable")
@@ -83,6 +93,13 @@ func (c *Collector) Poll() sessions.Snapshot {
 		return c.unavailable(now, fmt.Sprintf("T3 database is locked or unreadable: %v", err))
 	}
 	defer tx.Rollback()
+	var v2 int
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='orchestration_v2_projection_threads'").Scan(&v2); err != nil {
+		return c.unavailable(now, "T3 database schema could not be inspected")
+	}
+	if v2 > 0 || (c.defaultPath && filepath.Base(c.path) == "statev2.sqlite") {
+		return c.unavailable(now, "T3 Orchestrator V2 is not yet supported; legacy state.sqlite is not used as a live fallback")
+	}
 	// T3 versions before event sequence projection leave sequence NULL.
 	// SQLite rowid still gives an indexed append cursor for those activity rows.
 	var rowID int64
@@ -233,7 +250,9 @@ const threadsQuery = `SELECT t.thread_id, t.title, p.title,
  FROM projection_threads t JOIN projection_projects p ON p.project_id=t.project_id
  LEFT JOIN projection_thread_sessions s ON s.thread_id=t.thread_id
  LEFT JOIN provider_session_runtime r ON r.thread_id=t.thread_id
- LEFT JOIN projection_turns v ON v.thread_id=t.thread_id AND v.turn_id=COALESCE(NULLIF(s.active_turn_id,''),t.latest_turn_id)
+ LEFT JOIN projection_turns v ON v.rowid = CASE WHEN s.status='starting' THEN
+ (SELECT rowid FROM projection_turns WHERE thread_id=t.thread_id AND state='pending' ORDER BY requested_at DESC,rowid DESC LIMIT 1)
+ ELSE (SELECT rowid FROM projection_turns WHERE thread_id=t.thread_id AND turn_id=COALESCE(NULLIF(s.active_turn_id,''),t.latest_turn_id) LIMIT 1) END
  WHERE t.deleted_at IS NULL ORDER BY t.thread_id`
 
 func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[string]*activity, now time.Time) ([]sessions.Summary, error) {
@@ -299,13 +318,15 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 			row.Status = "stopped"
 		case pending > 0:
 			row.Status = "waiting"
+		case providerStatus == "starting":
+			row.Status = "connecting"
 		case activeTurn:
 			// A resumed T3 turn can retain an earlier completed_at value.
 			// A nonterminal turn state takes precedence over that timestamp.
 			row.Status = "working"
 		}
-		if row.Status == "working" || row.Status == "waiting" {
-			if activeTurn {
+		if row.Status == "working" || row.Status == "waiting" || row.Status == "connecting" {
+			if activeTurn || providerStatus == "starting" {
 				row.TurnCompletedAt = nil
 			}
 			age := now.Sub(row.LastActivity)

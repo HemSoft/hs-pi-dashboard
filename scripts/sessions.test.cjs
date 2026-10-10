@@ -108,15 +108,15 @@ test('T3 duration uses the current or latest turn and stops growing offline', ()
   assert.equal(r.t3TurnDuration({...s, turnCompletedAt: null, lastActivity: end, active: true}, false), '5s');
 });
 
-test('Pulse counts working/waiting T3 rows and excludes offline or stale rows', () => {
+test('Pulse counts connecting/working/waiting T3 rows and excludes offline or stale rows', () => {
   const html = readFileSync(path.join(__dirname, '../internal/web/index.html'), 'utf8');
   const start = html.indexOf('function snapshotActiveSessionCount(');
   const end = html.indexOf('function cardCollapsed(', start);
   const r = vm.createContext({});
   vm.runInContext(html.slice(start,end),r);
   assert.equal(r.snapshotActiveSessionCount({machines: [
-    {online:true,sessions:[t3({active:true,status:'working'}),t3({active:true,status:'waiting'}),t3({status:'stale'})]},
-    {online:false,sessions:[t3({active:true,status:'working'})]}],hermesSessions:[]}),2);
+    {online:true,sessions:[t3({active:true,status:'working'}),t3({active:true,status:'waiting'}),t3({active:true,status:'connecting'}),t3({status:'stale'})]},
+    {online:false,sessions:[t3({active:true,status:'working'})]}],hermesSessions:[]}),3);
 });
 
 test('T3 notices identify and escape each configured environment path', () => {
