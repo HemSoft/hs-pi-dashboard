@@ -309,8 +309,8 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 			}
 		}
 		row.Status = "idle"
-		activeTurn := turnState == "running" || turnState == "pending" ||
-			(turnID != "" && turnState == "" && providerStatus == "running")
+		activeTurn := providerStatus == "running" && (turnState == "running" || turnState == "pending" ||
+			(turnID != "" && turnState == ""))
 		switch {
 		case lastError != "" || providerStatus == "error" || turnState == "error":
 			row.Status = "error"

@@ -352,3 +352,22 @@ func TestExplicitV2WithLegacyTablesIsUnsupported(t *testing.T) {
 		t.Fatalf("explicit V2: %+v", snap)
 	}
 }
+
+func TestReadyProviderDoesNotActivateRetainedNonterminalTurn(t *testing.T) {
+	for _, state := range []string{"running", "pending"} {
+		t.Run(state, func(t *testing.T) {
+			db, c, now := fixture(t)
+			thread(t, db, "ready", now)
+			exec(t, db, `UPDATE projection_thread_sessions SET status='ready'`)
+			exec(t, db, `UPDATE projection_turns SET state=?`, state)
+			snap := c.Poll()
+			if snap.ActiveSessions != 0 || snap.Sessions[0].Active || snap.Sessions[0].Status != "idle" {
+				t.Fatalf("ready with retained %s turn: %+v", state, snap)
+			}
+			exec(t, db, `UPDATE projection_thread_sessions SET status='running'`)
+			if snap = c.Poll(); snap.ActiveSessions != 1 || snap.Sessions[0].Status != "working" {
+				t.Fatalf("provider resumed: %+v", snap)
+			}
+		})
+	}
+}
