@@ -38,7 +38,7 @@ func TestClaudeSummarizesContentBlocksOnce(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	s := snap.Sessions[0]
-	if s.ID != "claude-code:shared" || s.Provider != "claude-code" || s.Project != "dashboard" || s.Model != "claude-opus-4-6" || s.ThinkingLevel != "high" {
+	if s.Source != "claude-code" || s.ID != "claude-code:shared" || s.Provider != "claude-code" || s.Project != "dashboard" || s.Model != "claude-opus-4-6" || s.ThinkingLevel != "high" {
 		t.Fatalf("identity = %+v", s)
 	}
 	if s.MessageCount != 3 || s.InputTokens != 130 || s.OutputTokens != 40 || s.TotalTokens != 170 {

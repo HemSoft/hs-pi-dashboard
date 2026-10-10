@@ -105,7 +105,7 @@ type Snapshot struct {
 	Sources        []SourceHealth `json:"sources,omitempty"`
 	Machine        string         `json:"machine"`
 	GeneratedAt    time.Time      `json:"generatedAt"`
-	SessionsDir    string         `json:"sessionsDir"`
+	SessionsDir    string         `json:"sessionsDir"` // Pi collector root, including in legacy mixed-source snapshots
 	Sessions       []Summary      `json:"sessions"`
 	ActiveSessions int            `json:"activeSessions"`
 }
@@ -380,6 +380,7 @@ func applyEntry(s *Summary, line []byte) {
 
 	switch head.Type {
 	case "session":
+		s.Source = "pi"
 		s.ID = rawString(head.ID)
 		s.Name = head.Name
 		s.Cwd = head.Cwd

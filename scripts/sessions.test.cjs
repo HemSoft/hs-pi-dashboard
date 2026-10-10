@@ -18,12 +18,12 @@ function renderer() {
 }
 
 function claude(overrides = {}) {
-  return { id: 'claude-code:shared', project: 'dashboard', provider: 'claude-code', model: 'claude-opus-4-6', active: true, startedAt: new Date().toISOString(), lastActivity: new Date().toISOString(), ...overrides };
+  return { id: 'claude-code:shared', source: 'claude-code', project: 'dashboard', provider: 'claude-code', model: 'claude-opus-4-6', active: true, startedAt: new Date().toISOString(), lastActivity: new Date().toISOString(), ...overrides };
 }
 
 test('Claude and Pi rows coexist and active Claude is visible before output', () => {
   const r = renderer();
-  const html = r.sessionsTable([{ name: 'home', online: true, sessions: [{ ...claude(), id: 'shared', provider: 'openai-codex' }, claude()] }], []);
+  const html = r.sessionsTable([{ name: 'home', online: true, sessions: [{ ...claude(), id: 'shared', source:'pi', provider: 'openai-codex' }, claude()] }], []);
   assert.match(html, /claude-code/);
   assert.match(html, /openai-codex/);
   assert.equal((html.match(/<tr class="active"/g) || []).length, 2);
@@ -53,7 +53,7 @@ test('quiet T3 threads remain visible with status, repository and unknown metric
   const r = renderer();
   const html = r.sessionsTable([{ name: 'mini', online: true, sessions: [t3()] }], []);
   assert.match(html, /Fix &lt;unsafe&gt; title/);
-  assert.match(html, /T3 idle/);
+  assert.match(html, /T3 Code<\/span> · <span class="session-state idle">idle/);
   assert.match(html, /fleet-repo/);
   assert.match(html, /<b>tools<\/b> 7/);
   assert.match(html, /<b>in<\/b> n\/a/);
@@ -74,7 +74,7 @@ test('source failure and offline cached T3 metadata are visible without live row
   const r = renderer();
   const machine = { name: 'mini', online: false, sources: [{source: 't3', state: 'healthy'}], sessions: [t3({active: true, status: 'working'})] };
   let html = r.sessionsTable([machine], []);
-  assert.match(html, /T3 offline/);
+  assert.match(html, /T3 Code<\/span> · <span class="session-state unavailable">offline/);
   assert.match(html, /Cached sessions; machine unreachable/);
   assert.doesNotMatch(html, /class="active"/);
   html = r.sessionsTable([{name: 'air', online: true, sources: [{source: 't3', state: 'unavailable', error: '<database missing>'}], sessions: []}], []);
@@ -131,8 +131,55 @@ test('T3 notices identify and escape each configured environment path', () => {
 test('independent live Claude fallback identifies cached T3 statistics and unknown turn time', () => {
   const r=renderer();
   const html=r.sessionsTable([{name:'mini',online:true,sessions:[t3({active:true,status:'unavailable',activitySource:'claude-code'})]}],[]);
-  assert.match(html,/T3 unavailable/);
+  assert.match(html,/session-state unavailable">unavailable/);
   assert.match(html,/Claude transcript active/);
   assert.match(html,/<b>statistics<\/b> cached T3/);
   assert.match(html,/<b>turn<\/b> n\/a/);
+});
+
+function appLabels(html) {
+  return [...html.matchAll(/class="session-app">([^<]+)<\/span>/g)].map(m => m[1]);
+}
+
+test('application identity is independent of provider, model and generic machine grouping', () => {
+  const r = renderer();
+  const common = {project:'Shared engine',provider:'openai-codex',model:'gpt-6.1-sol',active:true};
+  const html = r.sessionsTable([{name:'mini',online:true,sessions:[
+    {...common,id:'pi-run',source:'pi'},
+    {...common,id:'t3:env:thread',source:'t3',status:'working'},
+    {...common,id:'claude-code:native',source:'claude-code'},
+    {...common,id:'unknown',source:'future'},
+    {...common,id:'legacy-unknown'},
+    {...common,id:'prototype-key',source:'constructor'},
+  ]}], [{id:'hermes-run',source:'cli',profile:'developer',model:common.model,active:true}]);
+  assert.deepEqual(appLabels(html).sort(),['Claude Code','Hermes','Pi','T3 Code','Unknown app','Unknown app','Unknown app'].sort());
+  assert.equal((html.match(/<tr class="active"/g)||[]).length,7);
+  assert.match(html,/openai-codex/);
+  assert.match(html,/gpt-6.1-sol/);
+});
+
+test('app labels survive pagination, expanded output, polling and offline cache', () => {
+  const r=renderer();
+  const sessions=Array.from({length:21},(_,i)=>({id:'pi-'+i,source:'pi',project:'Pi '+i,active:true,lastActivity:new Date(Date.now()-i*1000).toISOString(),outputs:[{text:'Result',at:new Date().toISOString()}]}));
+  sessions.push(t3({lastActivity:'2000-01-01T00:00:00Z'}));
+  const machines=[{name:'mini',online:true,sessions}];
+  assert.equal(appLabels(r.sessionsTable(machines,[])).length,20);
+  vm.runInContext('currentPage=2; expandedOutputs.add("mini/pi-20")',r);
+  for(let poll=0;poll<2;poll++) {
+    const html=r.sessionsTable(machines,[]);
+    assert.deepEqual(appLabels(html),['Pi','T3 Code']);
+    assert.match(html,/page 2 \/ 2/);
+    assert.match(html,/out-text/);
+  }
+  machines[0].online=false;
+  assert.deepEqual(appLabels(r.sessionsTable(machines,[])),['Pi','T3 Code']);
+  assert.equal(vm.runInContext('currentPage',r),2);
+});
+
+test('a merged T3 row retains its app and independent Claude activity notice', () => {
+  const r=renderer();
+  const html=r.sessionsTable([{name:'mini',online:true,sessions:[t3({active:true,activitySource:'claude-code',status:'unavailable',outputs:[{text:'Native Claude result',at:new Date().toISOString()}]})]}],[]);
+  assert.deepEqual(appLabels(html),['T3 Code']);
+  assert.match(html,/Claude transcript active/);
+  assert.equal((html.match(/<tr class="active/g)||[]).length,1);
 });

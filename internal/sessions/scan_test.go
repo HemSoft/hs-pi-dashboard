@@ -46,6 +46,9 @@ func TestPollSummarizesSessionFiles(t *testing.T) {
 		t.Fatalf("sessions = %d, want 2", len(snap.Sessions))
 	}
 	first := snap.Sessions[0]
+	if first.Source != "pi" {
+		t.Fatalf("source = %q, want pi", first.Source)
+	}
 	if first.ID != "abc" {
 		t.Fatalf("most recent session id = %q, want abc", first.ID)
 	}

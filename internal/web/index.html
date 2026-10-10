@@ -205,7 +205,9 @@
   .pager-btn:disabled { opacity: .35; cursor: default; }
   .pager-count { margin-left: auto; }
   .session-table .title { color: var(--gold); font-weight: 600; max-width: 300px; }
-  .session-table .session-meta { display: block; margin-top: 4px; color: var(--text); font-size: 10px; font-weight: 400; }
+  .session-table .session-meta { display: block; margin-top: 4px; color: var(--text); font-size: 11px; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+  .session-app { color: var(--gold); font-weight: 600; }
+  .session-table tr.offline td.title { opacity: 1; }
   .session-table .t3-title { white-space: normal; overflow-wrap: anywhere; }
   .session-state { color: var(--muted); }
   .session-state.working { color: #7ce3a3; }
@@ -961,6 +963,7 @@ function sessionsTable(machines, hermesSessions) {
     const profileAlias = { default: "COS", janitor: "Janitor", developer: "Developer" }[s.profile] || s.profile;
     const entry = {
       id: s.id,
+      source: "hermes",
       cwd: s.cwd || "~/.hermes",
       project: (s.name || s.source + ":" + (s.id || "").slice(0, 8)) + (profileAlias ? " [" + profileAlias + "]" : ""),
       provider: "hermes:" + (s.profile || "unknown"),
@@ -1053,6 +1056,16 @@ function sessionsTable(machines, hermesSessions) {
   </div>`;
 }
 
+function applicationName(s) {
+  switch (s.source) {
+    case "pi": return "Pi";
+    case "t3": return "T3 Code";
+    case "claude-code": return "Claude Code";
+    case "hermes": return "Hermes";
+    default: return "Unknown app";
+  }
+}
+
 function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   const live = kind === "pi" ? (s.active && m.online) : s.active;
   const isT3 = s.source === "t3";
@@ -1074,7 +1087,7 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   return `
   <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}${isT3 ? `<span class="session-meta"><span class="session-state ${esc(m.online ? s.status : "unavailable")}">T3 ${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}</span>` : ""}</td>
+    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}<span class="session-meta"><span class="session-app">${applicationName(s)}</span>${isT3 ? ` · <span class="session-state ${esc(m.online ? s.status : "unavailable")}">${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}` : ""}</span></td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
