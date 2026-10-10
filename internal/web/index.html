@@ -212,12 +212,17 @@
   .session-state { color: var(--muted); }
   .session-state.working { color: #7ce3a3; }
   .session-state.waiting, .session-state.connecting { color: var(--gold); }
-  .session-state.error, .session-state.stale, .session-state.unavailable { color: #ffab91; }
+  .session-state.error, .session-state.unavailable { color: #ffab91; }
   .session-table .t3-details td { padding-top: 0; white-space: normal; }
   .t3-metrics { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--text); font-size: 10px; line-height: 1.6; }
   .t3-metrics span { white-space: nowrap; }
   .t3-metrics b { font-weight: 400; color: var(--muted); }
-  .source-notices { list-style: none; margin-bottom: 10px; color: #ffab91; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  .session-toggle { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .session-toggle:focus-visible, .source-status summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .source-status { margin-bottom: 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .source-status summary { cursor: pointer; width: fit-content; }
+  .source-status .source-failure { color: #ffab91; }
+  .source-notices { list-style: none; margin-top: 6px; overflow-wrap: anywhere; }
   @media (max-width: 680px) {
     .session-table th:nth-child(3), .session-table td:nth-child(3),
     .session-table th:nth-child(5), .session-table td:nth-child(5),
@@ -921,29 +926,29 @@ let sessionBaselineReady = false;
 let activeFlashDetected = false;
 const flashingSessions = new Map();
 const ROW_FLASH_MS = 1200;
-// Sessions whose output rows are expanded (default: collapsed). Keys match
+// Sessions whose details are expanded (default: collapsed). Keys match
 // the row keys below, so the choice survives the 5s re-render.
 const expandedOutputs = new Set();
+let sourceDiagnosticsOpen = false;
 // Table paging: 20 sessions per page; state survives the 5s re-render.
 const PAGE_SIZE = 20;
 let currentPage = 1;
 
-// Any session with stored output can be expanded, however old it is; the
-// only gate is that visible output exists at all. Expansion is purely
-// user-driven (default collapsed) and persists across re-renders.
+// Stored output remains available however old it is. T3 rows also have
+// reported statistics, so they can expand even without assistant output.
 function availableOutputs(s) {
   const outs = s.outputs || [];
   return outs.length ? outs : null;
 }
 
 // Pure renderer for one session's output rows (newest first).
-function renderOutputRows(outs, flash) {
+function renderOutputRows(outs, flash, detailsId = "") {
   return outs.map((o, i) => {
     const age = Date.now() - new Date(o.at).getTime();
     if (!Number.isFinite(age) || age < 0) return "";
     const cls = "subrow" + (i === 0 && flash ? " flash" : "");
     return `
-  <tr class="${cls}"><td colspan="9"><div>
+  <tr class="${cls}"${i === 0 && detailsId ? ` id="${esc(detailsId)}"` : ""}><td colspan="9"><div>
     <span class="out-text" title="${esc(o.text)}">${esc(o.text)}</span>
     <span class="out-age" title="${esc(o.at)}">${compactDur(age)}</span>
   </div></td></tr>`;
@@ -1007,7 +1012,7 @@ function sessionsTable(machines, hermesSessions) {
     if (changed && entryIsLive(entry)) activeFlashDetected = true;
   }
   // Active work belongs in the table before it has produced assistant text.
-  // Completed quiet runs stay hidden, and rows without output have no chevron.
+  // Completed quiet Pi runs stay hidden; T3 statistics remain expandable.
   const visible = flat.filter((entry) =>
     entry.s.source === "t3" || entryIsLive(entry) || (entry.s.outputs || []).length > 0);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
@@ -1017,9 +1022,13 @@ function sessionsTable(machines, hermesSessions) {
     const key = entryKey(entry);
     const flash = (flashingSessions.get(key) || 0) > renderAt;
     const outs = availableOutputs(entry.s);
-    const expandedNow = !!(outs && expandedOutputs.has(key));
-    const subs = expandedNow ? renderOutputRows(outs, flash) : "";
-    return sessionRow(entry.s, entry.m, flash, entry.kind, !!outs, expandedNow, key) + subs;
+    const isT3 = entry.s.source === "t3";
+    const expandable = isT3 || !!outs;
+    const expandedNow = expandable && expandedOutputs.has(key);
+    const detailsId = "session-details-" + encodeURIComponent(key);
+    const metrics = expandedNow && isT3 ? t3Metrics(entry.s, entry.m, flash, detailsId) : "";
+    const outputs = expandedNow && outs ? renderOutputRows(outs, flash, isT3 ? "" : detailsId) : "";
+    return sessionRow(entry.s, entry.m, flash, entry.kind, expandable, expandedNow, key, detailsId) + metrics + outputs;
   });
   lastSigs = newSigs;
   for (const [key, expiresAt] of flashingSessions) {
@@ -1038,11 +1047,17 @@ function sessionsTable(machines, hermesSessions) {
     <button class="pager-btn" data-page="next" ${currentPage >= totalPages ? "disabled" : ""}>›</button>
     <span class="pager-count">${visible.length} sessions</span>
   </div>` : "";
-  const notices = (machines || []).flatMap((m) => (m.sources || [])
+  const sources = (machines || []).flatMap((m) => (m.sources || [])
     .filter((source) => source.source === "t3" && (!m.online || source.state !== "healthy"))
-    .map((source) => `<li>${esc(m.name)} · T3 ${esc(m.online ? source.state : "offline")} · ${esc(m.online ? source.error || "Collection unavailable" : "Cached sessions; machine unreachable")} · ${esc(source.path || "environment unknown")}</li>`));
+    .map((source) => ({ m, source, state: m.online ? source.state || "unavailable" : "offline" })));
+  const counts = new Map();
+  for (const { state } of sources) counts.set(state, (counts.get(state) || 0) + 1);
+  const status = sources.length ? `<details class="source-status"${sourceDiagnosticsOpen ? " open" : ""}>
+    <summary id="source-status-toggle">T3 collection · ${Array.from(counts, ([state, count]) => `<span${state !== "stale" ? ' class="source-failure"' : ""}>${count} ${esc(state)}</span>`).join(" · ")}</summary>
+    <ul class="source-notices" aria-label="T3 collection diagnostics">${sources.map(({m, source, state}) => `<li>${esc(m.name)} · T3 ${esc(state)} · ${esc(m.online ? source.error || "Collection unavailable" : "Cached sessions; machine unreachable")} · ${esc(source.path || "environment unknown")}</li>`).join("")}</ul>
+  </details>` : "";
   return `
-  ${notices.length ? `<ul class="source-notices" aria-label="T3 collection status">${notices.join("")}</ul>` : ""}
+  ${status}
   ${pager}
   <div class="session-table-wrap">
     <table class="session-table">
@@ -1066,7 +1081,7 @@ function applicationName(s) {
   }
 }
 
-function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
+function sessionRow(s, m, flash, kind, avail, expandedNow, key, detailsId) {
   const live = kind === "pi" ? (s.active && m.online) : s.active;
   const isT3 = s.source === "t3";
   const session = (isT3 && s.name) || s.project || s.cwd?.split(/[\\/]/).filter(Boolean).pop() || s.id?.slice(0, 8) || "session";
@@ -1079,15 +1094,15 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
   const started = s.startedAt ? compactDur(Date.now() - new Date(s.startedAt).getTime()) : "";
   const dur = isT3 ? t3TurnDuration(s, m.online) : durationOf({ ...s, active: live });
   const price = isT3 ? "n/a" : s.costUsd >= 0.00005 ? `$${s.costUsd.toFixed(s.costUsd < 0.01 ? 4 : 2)}` : "";
-  // avail = fresh output exists (chevron + clickable); expandedNow = the
-  // detail rows are actually rendered right now (border drops, chevron opens).
+  // T3 statistics and stored output can be expanded independently of activity.
   const cls = (live ? "active" : (isT3 && m.online ? "idle" : "offline")) + (flash ? " flash" : "")
     + (expandedNow ? " has-sub" : "") + (avail ? " toggleable" : "");
   const attrs = avail ? ` class="${cls}" data-skey="${esc(key)}"` : ` class="${cls}"`;
+  const title = avail ? `<button class="session-toggle" id="session-toggle-${esc(encodeURIComponent(key))}" aria-expanded="${expandedNow}"${expandedNow ? ` aria-controls="${esc(detailsId)}"` : ""}><span class="out-chev" aria-hidden="true">${expandedNow ? "▾" : "▸"}</span>${esc(session)}</button>` : esc(session);
   return `
   <tr${attrs}>
     <td>${esc(m.name)}</td>
-    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${avail ? `<span class="out-chev">${expandedNow ? "▾" : "▸"}</span>` : ""}${esc(session)}<span class="session-meta"><span class="session-app">${applicationName(s)}</span>${isT3 ? ` · <span class="session-state ${esc(m.online ? s.status : "unavailable")}">${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}` : ""}</span></td>
+    <td class="title${isT3 ? " t3-title" : ""}" title="${esc(kind === "hermes" ? (s.source + ":" + s.id) : (s.cwd || ""))}">${title}<span class="session-meta"><span class="session-app">${applicationName(s)}</span>${isT3 ? ` · <span class="session-state ${esc(m.online ? s.status : "unavailable")}">${esc(m.online ? s.status : "offline")}</span>${s.activitySource === "claude-code" && live ? " · Claude transcript active" : ""} · ${esc(s.project || "repository unknown")}` : ""}</span></td>
     <td>${esc(provider)}</td>
     <td>${esc(model)}</td>
     <td>${esc(effort)}</td>
@@ -1095,7 +1110,7 @@ function sessionRow(s, m, flash, kind, avail, expandedNow, key) {
     <td title="${esc(s.startedAt || "")}">${esc(started)}</td>
     <td>${price}</td>
     <td>${esc(dur)}</td>
-  </tr>${isT3 ? t3Metrics(s, m, flash) : ""}`;
+  </tr>`;
 }
 
 function t3TurnDuration(s, online) {
@@ -1108,7 +1123,7 @@ function t3TurnDuration(s, online) {
   return ms < 60000 ? Math.floor(ms / 1000) + "s" : compactDur(ms);
 }
 
-function t3Metrics(s, m, flash) {
+function t3Metrics(s, m, flash, detailsId) {
   const u = s.t3Usage || {};
   const count = (n) => Number.isFinite(n) && n >= 0 ? n.toLocaleString("en-US") : "n/a";
   const cls = (m.online ? "" : " offline") + (flash ? " flash" : "");
@@ -1121,7 +1136,7 @@ function t3Metrics(s, m, flash) {
     ["context", count(u.contextTokens) + " / " + count(u.contextLimit)],
     ["turn", t3TurnDuration(s, m.online)],
   ];
-  return `<tr class="t3-details${cls}"><td colspan="9"><div class="t3-metrics" aria-label="T3 reported statistics">${metrics.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div></td></tr>`;
+  return `<tr class="t3-details${cls}" id="${esc(detailsId)}"><td colspan="9"><div class="t3-metrics" aria-label="T3 reported statistics">${metrics.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div></td></tr>`;
 }
 
 let lastHermes = [];
@@ -1131,7 +1146,12 @@ let lastHermes = [];
 function renderSessions() {
   if (!lastFleet) return;
   activeFlashDetected = false;
-  document.getElementById("app").innerHTML = sessionsTable(lastFleet.machines, lastHermes);
+  const app = document.getElementById("app");
+  const focusedId = app.contains(document.activeElement) ? document.activeElement.id : "";
+  const diagnostics = app.querySelector(".source-status");
+  if (diagnostics) sourceDiagnosticsOpen = diagnostics.open;
+  app.innerHTML = sessionsTable(lastFleet.machines, lastHermes);
+  if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
   renderUsage(lastFleet);
   HerdrDashboard.render(lastFleet);
   if (activeFlashDetected) triggerActivityPulse(lastFleet.activeSessions || 0);
@@ -1172,7 +1192,8 @@ bindUsageCardToggles();
 initPulse();
 tick();
 setInterval(tick, 5000);
-// Clicking a session row with fresh output toggles its detail rows; state
+// Clicking an expandable session row toggles its details; its native button
+// also supports Enter/Space. State
 // lives in expandedOutputs so it survives the 5s re-render. Pager buttons
 // share the same delegated listener.
 document.getElementById("app").addEventListener("click", (e) => {

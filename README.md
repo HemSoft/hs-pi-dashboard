@@ -107,10 +107,18 @@ Pulse counts connecting, working and waiting threads only while their recorded a
 within `-active-window`, two minutes by default. A connected provider with no
 active turn is idle. This is recent recorded activity, not a process heartbeat:
 a quiet long-running tool can become stale even while T3 is running. Stale threads
-stay visible with a warning and do not count as live. Duration uses the latest turn,
+stay visible with a subdued status and do not count as live. A compact T3 collection
+disclosure opens the stale explanation, source path and failure diagnostics on demand.
+Actual unavailable/offline sources retain a highlighted status in that summary.
+Duration uses the latest turn,
 not the lifetime of the thread.
 
-The statistics line shows distinct tool calls and the latest reported input,
+T3 rows start collapsed. Click their title or use Tab followed by Enter/Space to
+expand statistics and any stored assistant output, even when no output exists.
+Expansion and diagnostic disclosure survive polling; row expansion also survives
+pagination. Collapse the row to return to the compact list.
+
+The expanded statistics line shows distinct tool calls and the latest reported input,
 output, total, cache, reasoning and context counters. Repeated cumulative snapshots
 replace previous counters rather than adding to them. `n/a` means the provider did
 not report that metric; zero remains zero. Context usage is separate from total
