@@ -78,6 +78,12 @@
   root.HerdrDashboard = {render, fail, rows, rowHTML, terminalURL};
   if (typeof module !== 'undefined') module.exports = root.HerdrDashboard;
   if (typeof document !== 'undefined') {
+    const toggle = document.getElementById('herdr-toggle');
+    const body = document.getElementById('herdr-body');
+    toggle.addEventListener('click', () => {
+      body.hidden = !body.hidden;
+      toggle.setAttribute('aria-expanded', String(!body.hidden));
+    });
     document.getElementById('herdr-machine-filter').addEventListener('change', renderRows);
     document.getElementById('herdr-state-filter').addEventListener('change', renderRows);
   }

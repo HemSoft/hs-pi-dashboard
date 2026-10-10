@@ -4,7 +4,8 @@ const {rows,rowHTML,terminalURL} = require('./herdr.js');
 const fs = require('node:fs');
 const vm = require('node:vm');
 function view() {
-  const nodes = Object.fromEntries(['herdr-machines','herdr-machine-filter','herdr-state-filter','herdr-summary','herdr-rows','herdr-note'].map(id => [id,{
+  const nodes = Object.fromEntries(['herdr-toggle','herdr-body','herdr-machines','herdr-machine-filter','herdr-state-filter','herdr-summary','herdr-rows','herdr-note'].map(id => [id,{
+    hidden:id === 'herdr-body', attributes:{}, setAttribute(name,value) { this.attributes[name] = value; },
     value:'all', innerHTML:'', textContent:'', options:['all','home','air','mini'].map(value => ({value})),
     classList:{toggle() {}, add() {}}, addEventListener(event, callback) { this[event] = callback; },
   }]));
@@ -65,4 +66,25 @@ test('changing filters after an outage cannot resurrect cached live rows', () =>
 test('terminal links accept HTTPS only and no embedded credentials', () => {
   assert.equal(terminalURL('https://home.hemsoft.net'),'https://home.hemsoft.net/');
   for(const u of ['javascript:alert(1)','http://home','https://user:secret@home','not-a-url']) assert.equal(terminalURL(u),'');
+});
+
+test('collapsed Herdr keeps updating without reopening or losing filters', () => {
+  const {nodes,ui} = view();
+  assert.equal(nodes['herdr-body'].hidden,true);
+  ui.render({machines:[machine('home'),machine('air')]});
+  nodes['herdr-toggle'].click();
+  assert.equal(nodes['herdr-body'].hidden,false);
+  assert.equal(nodes['herdr-toggle'].attributes['aria-expanded'],'true');
+  nodes['herdr-machine-filter'].value='air';
+  nodes['herdr-state-filter'].value='blocked';
+  nodes['herdr-toggle'].click();
+  for (let poll=0;poll<2;poll++) ui.render({machines:[machine('home'),machine('air')]});
+  assert.equal(nodes['herdr-body'].hidden,true);
+  assert.equal(nodes['herdr-toggle'].attributes['aria-expanded'],'false');
+  assert.equal((nodes['herdr-rows'].innerHTML.match(/class="herdr-row"/g)||[]).length,1);
+  nodes['herdr-toggle'].click();
+  assert.equal(nodes['herdr-machine-filter'].value,'air');
+  assert.equal(nodes['herdr-state-filter'].value,'blocked');
+  ui.fail();
+  assert.equal(nodes['herdr-body'].hidden,false);
 });
