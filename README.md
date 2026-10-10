@@ -23,7 +23,11 @@ One Go binary, two modes:
 ## What it shows
 
 The live Herdr monitor shows agent states across machines and named Herdr
-sessions, with machine and state filters. Collection is read-only and does not
+sessions, with machine and state filters. It starts collapsed; select **Live Herdr
+agents** to show or hide all machine terminals, filters, and workspace states.
+Pulse starts expanded unless you previously saved it collapsed. Each section
+opens independently, and collection continues while Herdr is collapsed.
+Collection is read-only and does not
 send input, change focus, start a Herdr server, or read terminal transcripts.
 Unavailable or stale collectors do not count as live. Agents running only in
 tmux are not included in this monitor; session history and Pulse remain separate.

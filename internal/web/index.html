@@ -244,7 +244,8 @@
   <span class="refresh"><span class="dot"></span>live · refresh 5s</span>
 </header>
 <section class="herdr-section" aria-labelledby="herdr-title">
-  <div class="herdr-heading"><h2 id="herdr-title">Live Herdr agents</h2><p>Home, Mini, and Air. One view, separate sessions.</p></div>
+  <h2 id="herdr-title"><button id="herdr-toggle" class="usage-toggle" type="button" aria-expanded="false" aria-controls="herdr-body"><span class="chev" aria-hidden="true">▾</span> Live Herdr agents</button></h2>
+  <div id="herdr-body" hidden>
   <nav id="herdr-machines" class="herdr-machines" aria-label="Machine terminals"></nav>
   <div class="herdr-controls">
     <label>Machine <select id="herdr-machine-filter"><option value="all">All machines</option></select></label>
@@ -254,6 +255,7 @@
   <div class="herdr-columns" aria-hidden="true"><span>Workspace</span><span>Machine / pane</span><span>Agent</span><span>Session</span><span>State</span></div>
   <ul id="herdr-rows" class="herdr-rows" aria-label="Live agents"><li class="herdr-empty">Connecting to agent collectors...</li></ul>
   <p id="herdr-note" class="herdr-note">The dashboard reads agent states. Use a machine terminal to interact.</p>
+  </div>
 </section>
 <section class="usage-section">
   <button id="usage-toggle" class="usage-toggle" aria-expanded="true">
