@@ -11,11 +11,13 @@ import (
 
 	"github.com/HemSoft/hs-pi-dashboard/internal/herdr"
 	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
+	"github.com/HemSoft/hs-pi-dashboard/internal/t3"
 	"github.com/HemSoft/hs-pi-dashboard/internal/usage"
 )
 
 // Options configures one agent.
 type Options struct {
+	T3DBs        []string      // T3 environment databases; nil uses ~/.t3/userdata/state.sqlite, "off" disables
 	Addr         string        // listen address, e.g. 100.101.122.39:8787
 	Dir          string        // pi sessions dir; empty = ~/.pi/agent/sessions
 	ClaudeDir    string        // Claude Code projects dir; empty = ~/.claude/projects
@@ -65,8 +67,24 @@ func Run(opts Options) error {
 func sessionHandler(opts Options) http.HandlerFunc {
 	scanner := sessions.NewScanner(opts.Dir, opts.ActiveWindow)
 	claudeScanner := sessions.NewClaudeScanner(opts.ClaudeDir, opts.ActiveWindow)
+	paths := opts.T3DBs
+	if len(paths) == 0 {
+		paths = []string{""}
+	}
+	var collectors []*t3.Collector
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if path != "off" && !seen[path] {
+			collectors = append(collectors, t3.New(path, opts.ActiveWindow))
+			seen[path] = true
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		snap := sessions.MergeSnapshots(scanner.Poll(), claudeScanner.Poll())
+		snaps := []sessions.Snapshot{scanner.Poll(), claudeScanner.Poll()}
+		for _, collector := range collectors {
+			snaps = append(snaps, collector.Poll())
+		}
+		snap := sessions.MergeSnapshots(snaps...)
 		snap.Machine = opts.Machine
 		writeJSON(w, http.StatusOK, snap)
 	}

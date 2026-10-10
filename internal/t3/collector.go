@@ -1,0 +1,322 @@
+// Package t3 reads T3 Code's local SQLite projections without changing them.
+// It reports metadata and provider counters, never prompts or tool payloads.
+package t3
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/HemSoft/hs-pi-dashboard/internal/sessions"
+	_ "modernc.org/sqlite"
+)
+
+// Collector owns the incremental activity cache for one T3 environment.
+type Collector struct {
+	path       string
+	window     time.Duration
+	now        func() time.Time
+	mu         sync.Mutex
+	file       os.FileInfo
+	rowID      int64
+	activities map[string]*activity
+	last       sessions.Snapshot
+}
+
+type activity struct {
+	tools map[string]bool
+	usage *sessions.T3Usage
+	at    time.Time
+}
+
+// New uses the default T3 userdata path when path is empty. Each configured
+// environment gets its own collector and namespaced thread identities.
+func New(path string, window time.Duration) *Collector {
+	if path == "" {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, ".t3", "userdata", "state.sqlite")
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, path[2:])
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if window <= 0 {
+		window = sessions.DefaultActiveWindow
+	}
+	return &Collector{path: path, window: window, now: time.Now, activities: map[string]*activity{}}
+}
+
+// Poll reads a consistent projection snapshot. A failed source retains cached
+// metadata but clears activity so it cannot inflate Pulse or look live.
+func (c *Collector) Poll() sessions.Snapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	info, err := os.Stat(c.path)
+	if err != nil {
+		return c.unavailable(now, "T3 database unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(c.path), RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return c.unavailable(now, "T3 database could not be opened read-only")
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return c.unavailable(now, "T3 database is locked or unreadable")
+	}
+	defer tx.Rollback()
+	// T3 versions before event sequence projection leave sequence NULL.
+	// SQLite rowid still gives an indexed append cursor for those activity rows.
+	var rowID int64
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid),0) FROM projection_thread_activities").Scan(&rowID); err != nil {
+		return c.unavailable(now, "T3 projections unavailable: incompatible schema or locked database")
+	}
+	old := c.activities
+	after := c.rowID
+	if c.file == nil || !os.SameFile(c.file, info) || rowID < after {
+		old = nil
+		after = 0
+	}
+	next := cloneActivities(old)
+	if err = readActivities(ctx, tx, after, next); err != nil {
+		return c.unavailable(now, "T3 activity projections unavailable")
+	}
+	rows, err := c.readThreads(ctx, tx, next, now)
+	if err != nil {
+		return c.unavailable(now, "T3 thread projections unavailable: incompatible schema or locked database")
+	}
+	if err = tx.Commit(); err != nil {
+		return c.unavailable(now, "T3 database snapshot interrupted")
+	}
+	seen := map[string]bool{}
+	stale := 0
+	for _, row := range rows {
+		seen[strings.TrimPrefix(row.ID, c.prefix())] = true
+		if row.Status == "stale" {
+			stale++
+		}
+	}
+	for id := range next {
+		if !seen[id] {
+			delete(next, id)
+		}
+	}
+	c.file, c.rowID, c.activities = info, rowID, next
+	health := sessions.SourceHealth{Source: "t3", Path: c.path, State: "healthy", LastSuccessAt: now}
+	if stale > 0 {
+		health.State = "stale"
+		health.Error = fmt.Sprintf("%d quiet running thread(s); liveness unavailable", stale)
+	}
+	snap := sessions.Snapshot{GeneratedAt: now, Sessions: rows, Sources: []sessions.SourceHealth{health}}
+	for _, row := range rows {
+		if row.Active {
+			snap.ActiveSessions++
+		}
+	}
+	c.last = snap
+	return snap
+}
+
+func (c *Collector) prefix() string {
+	sum := sha256.Sum256([]byte(c.path))
+	return fmt.Sprintf("t3:%x:", sum[:8])
+}
+
+func (c *Collector) unavailable(now time.Time, reason string) sessions.Snapshot {
+	snap := sessions.Snapshot{GeneratedAt: now, Sources: []sessions.SourceHealth{{Source: "t3", Path: c.path, State: "unavailable", Error: reason}}}
+	if len(c.last.Sources) > 0 {
+		snap.Sources[0].LastSuccessAt = c.last.Sources[0].LastSuccessAt
+	}
+	for _, row := range c.last.Sessions {
+		row.Active, row.Status = false, "unavailable"
+		snap.Sessions = append(snap.Sessions, row)
+	}
+	return snap
+}
+
+func cloneActivities(old map[string]*activity) map[string]*activity {
+	out := make(map[string]*activity, len(old))
+	for id, a := range old {
+		copied := &activity{tools: make(map[string]bool, len(a.tools)), usage: a.usage, at: a.at}
+		for tool := range a.tools {
+			copied.tools[tool] = true
+		}
+		out[id] = copied
+	}
+	return out
+}
+
+func readActivities(ctx context.Context, tx *sql.Tx, after int64, cache map[string]*activity) error {
+	rows, err := tx.QueryContext(ctx, `SELECT a.thread_id, a.activity_id, a.kind,
+ CASE WHEN a.kind='context-window.updated' THEN a.payload_json
+ ELSE json_object('toolCallId',json_extract(a.payload_json,'$.toolCallId')) END, a.created_at
+ FROM projection_thread_activities a JOIN projection_threads t ON t.thread_id=a.thread_id
+ WHERE a.rowid > ? AND t.deleted_at IS NULL
+ AND (a.kind='tool.started' OR a.rowid IN (
+ SELECT MAX(rowid) FROM projection_thread_activities WHERE rowid > ? AND kind='context-window.updated' GROUP BY thread_id))
+ ORDER BY a.rowid`, after, after)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, activityID, kind, payload, created string
+		if err := rows.Scan(&id, &activityID, &kind, &payload, &created); err != nil {
+			return err
+		}
+		a := cache[id]
+		if a == nil {
+			a = &activity{tools: map[string]bool{}}
+			cache[id] = a
+		}
+		at := parseTime(created)
+		if at.After(a.at) {
+			a.at = at
+		}
+		if kind == "context-window.updated" {
+			var p struct {
+				Input     *int64 `json:"inputTokens"`
+				Output    *int64 `json:"outputTokens"`
+				Total     *int64 `json:"totalProcessedTokens"`
+				Cache     *int64 `json:"cachedInputTokens"`
+				Reasoning *int64 `json:"reasoningOutputTokens"`
+				Used      *int64 `json:"usedTokens"`
+				Max       *int64 `json:"maxTokens"`
+			}
+			if err := json.Unmarshal([]byte(payload), &p); err != nil {
+				return fmt.Errorf("invalid context counters: %w", err)
+			}
+			a.usage = &sessions.T3Usage{InputTokens: p.Input, OutputTokens: p.Output, TotalTokens: p.Total, CacheReadTokens: p.Cache, ReasoningTokens: p.Reasoning, ContextTokens: p.Used, ContextLimit: p.Max}
+		} else {
+			var p struct {
+				ID string `json:"toolCallId"`
+			}
+			if err := json.Unmarshal([]byte(payload), &p); err != nil {
+				return fmt.Errorf("invalid tool identity: %w", err)
+			}
+			if p.ID != "" {
+				a.tools[p.ID] = true
+			} else if kind == "tool.started" {
+				a.tools[activityID] = true
+			}
+		}
+	}
+	return rows.Err()
+}
+
+const threadsQuery = `SELECT t.thread_id, t.title, p.title,
+ COALESCE(t.worktree_path,p.workspace_root,''), t.created_at,t.updated_at,
+ COALESCE(t.archived_at,''),t.model_selection_json,
+ t.pending_approval_count+t.pending_user_input_count,
+ COALESCE(s.provider_name,''),COALESCE(s.provider_session_id,''),COALESCE(s.provider_thread_id,''),
+ COALESCE(s.status,''),COALESCE(s.active_turn_id,''),COALESCE(s.last_error,''),COALESCE(s.updated_at,''),
+ COALESCE(r.last_seen_at,''),COALESCE(v.state,''),COALESCE(v.started_at,v.requested_at,''),COALESCE(v.completed_at,''),
+ (SELECT COUNT(*) FROM projection_thread_messages m WHERE m.thread_id=t.thread_id AND m.role IN ('user','assistant'))
+ FROM projection_threads t JOIN projection_projects p ON p.project_id=t.project_id
+ LEFT JOIN projection_thread_sessions s ON s.thread_id=t.thread_id
+ LEFT JOIN provider_session_runtime r ON r.thread_id=t.thread_id
+ LEFT JOIN projection_turns v ON v.thread_id=t.thread_id AND v.turn_id=COALESCE(NULLIF(s.active_turn_id,''),t.latest_turn_id)
+ WHERE t.deleted_at IS NULL ORDER BY t.thread_id`
+
+func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[string]*activity, now time.Time) ([]sessions.Summary, error) {
+	rows, err := tx.QueryContext(ctx, threadsQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []sessions.Summary
+	for rows.Next() {
+		var id, created, updated, archived, model, providerStatus, turnID, lastError, sessionAt, runtimeAt, turnState, turnStart, turnEnd string
+		var pending int
+		var row sessions.Summary
+		if err := rows.Scan(&id, &row.Name, &row.Project, &row.Cwd, &created, &updated, &archived, &model, &pending,
+			&row.Provider, &row.ProviderSessionID, &row.ProviderThreadID, &providerStatus, &turnID, &lastError, &sessionAt,
+			&runtimeAt, &turnState, &turnStart, &turnEnd, &row.MessageCount); err != nil {
+			return nil, err
+		}
+		row.ID, row.Source = c.prefix()+id, "t3"
+		row.StartedAt, row.LastActivity = parseTime(created), parseTime(updated)
+		var selection struct {
+			Instance string `json:"instanceId"`
+			Model    string `json:"model"`
+			Options  []struct {
+				ID    string          `json:"id"`
+				Value json.RawMessage `json:"value"`
+			} `json:"options"`
+		}
+		if err := json.Unmarshal([]byte(model), &selection); err != nil {
+			return nil, fmt.Errorf("invalid model selection: %w", err)
+		}
+		row.Model = selection.Model
+		if row.Provider == "" {
+			row.Provider = selection.Instance
+		}
+		for _, option := range selection.Options {
+			if option.ID == "reasoningEffort" || option.ID == "effort" {
+				_ = json.Unmarshal(option.Value, &row.ThinkingLevel)
+			}
+		}
+		for _, stamp := range []string{sessionAt, runtimeAt, turnStart, turnEnd} {
+			at := parseTime(stamp)
+			if at.After(row.LastActivity) {
+				row.LastActivity = at
+			}
+		}
+		if at := parseTime(turnStart); !at.IsZero() {
+			row.TurnStartedAt = &at
+		}
+		if at := parseTime(turnEnd); !at.IsZero() {
+			row.TurnCompletedAt = &at
+		}
+		if a := cache[id]; a != nil {
+			row.ToolCallCount, row.T3Usage = len(a.tools), a.usage
+			if a.at.After(row.LastActivity) {
+				row.LastActivity = a.at
+			}
+		}
+		row.Status = "idle"
+		switch {
+		case lastError != "" || providerStatus == "error" || turnState == "error":
+			row.Status = "error"
+		case archived != "" || providerStatus == "stopped":
+			row.Status = "stopped"
+		case pending > 0:
+			row.Status = "waiting"
+		case turnID != "" || turnState == "running" || turnState == "pending":
+			// A resumed T3 turn can retain an earlier completed_at value.
+			// The active turn identity / running state takes precedence.
+			row.Status = "working"
+			row.TurnCompletedAt = nil
+		}
+		if row.Status == "working" || row.Status == "waiting" {
+			age := now.Sub(row.LastActivity)
+			row.Active = age >= 0 && age <= c.window
+			if !row.Active {
+				row.Status = "stale"
+			}
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func parseTime(s string) time.Time {
+	at, _ := time.Parse(time.RFC3339Nano, s)
+	return at
+}
