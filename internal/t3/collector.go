@@ -255,12 +255,9 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 		row.ID, row.Source = c.prefix()+id, "t3"
 		row.StartedAt, row.LastActivity = parseTime(created), parseTime(updated)
 		var selection struct {
-			Instance string `json:"instanceId"`
-			Model    string `json:"model"`
-			Options  []struct {
-				ID    string          `json:"id"`
-				Value json.RawMessage `json:"value"`
-			} `json:"options"`
+			Instance string          `json:"instanceId"`
+			Model    string          `json:"model"`
+			Options  json.RawMessage `json:"options"`
 		}
 		if err := json.Unmarshal([]byte(model), &selection); err != nil {
 			return nil, fmt.Errorf("invalid model selection: %w", err)
@@ -269,11 +266,11 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 		if row.Provider == "" {
 			row.Provider = selection.Instance
 		}
-		for _, option := range selection.Options {
-			if option.ID == "reasoningEffort" || option.ID == "effort" {
-				_ = json.Unmarshal(option.Value, &row.ThinkingLevel)
-			}
+		row.ThinkingLevel, err = modelEffort(selection.Options)
+		if err != nil {
+			return nil, err
 		}
+
 		for _, stamp := range []string{sessionAt, runtimeAt, turnStart, turnEnd} {
 			at := parseTime(stamp)
 			if at.After(row.LastActivity) {
@@ -293,20 +290,22 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 			}
 		}
 		row.Status = "idle"
+		activeTurn := turnState == "running" || turnState == "pending" ||
+			(turnID != "" && turnState == "" && providerStatus == "running")
 		switch {
 		case lastError != "" || providerStatus == "error" || turnState == "error":
 			row.Status = "error"
-		case archived != "" || providerStatus == "stopped":
+		case archived != "" || providerStatus == "stopped" || turnState == "interrupted":
 			row.Status = "stopped"
 		case pending > 0:
 			row.Status = "waiting"
-		case turnID != "" || turnState == "running" || turnState == "pending":
+		case activeTurn:
 			// A resumed T3 turn can retain an earlier completed_at value.
-			// The active turn identity / running state takes precedence.
+			// A nonterminal turn state takes precedence over that timestamp.
 			row.Status = "working"
 		}
 		if row.Status == "working" || row.Status == "waiting" {
-			if turnID != "" || turnState == "running" || turnState == "pending" {
+			if activeTurn {
 				row.TurnCompletedAt = nil
 			}
 			age := now.Sub(row.LastActivity)
@@ -318,6 +317,43 @@ func (c *Collector) readThreads(ctx context.Context, tx *sql.Tx, cache map[strin
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+// T3 migrated model options from an object to an array of id/value pairs.
+// Decode either encoding while ignoring provider options unrelated to effort.
+func modelEffort(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return "", nil
+	}
+	values := map[string]json.RawMessage{}
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return "", err
+		}
+		normalized := make(map[string]json.RawMessage, len(values))
+		for id, value := range values {
+			normalized[strings.TrimSpace(id)] = value
+		}
+		values = normalized
+	} else {
+		var options []struct {
+			ID    string          `json:"id"`
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.Unmarshal(raw, &options); err != nil {
+			return "", err
+		}
+		for _, option := range options {
+			values[strings.TrimSpace(option.ID)] = option.Value
+		}
+	}
+	for _, id := range []string{"reasoningEffort", "effort"} {
+		var effort string
+		if json.Unmarshal(values[id], &effort) == nil && effort != "" {
+			return strings.TrimSpace(effort), nil
+		}
+	}
+	return "", nil
 }
 
 func parseTime(s string) time.Time {

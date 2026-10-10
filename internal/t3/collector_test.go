@@ -241,3 +241,41 @@ func TestReadOnlyPathWithURICharacters(t *testing.T) {
 		t.Fatalf("escaped native path: %+v", snap.Sources)
 	}
 }
+
+func TestTerminalTurnsOverrideLaggingActiveIdentity(t *testing.T) {
+	db, c, now := fixture(t)
+	for _, state := range []string{"completed", "interrupted"} {
+		thread(t, db, state, now)
+		exec(t, db, `UPDATE projection_turns SET state=?, completed_at=? WHERE thread_id=?`, state, now.Format(time.RFC3339Nano), state)
+	}
+	snap := c.Poll()
+	if snap.ActiveSessions != 0 || len(snap.Sessions) != 2 {
+		t.Fatalf("terminal threads counted: %+v", snap)
+	}
+	for _, s := range snap.Sessions {
+		if s.TurnCompletedAt == nil || (s.Status != "idle" && s.Status != "stopped") {
+			t.Fatalf("lost terminal state: %+v", s)
+		}
+	}
+}
+
+func TestLegacyAndCurrentModelOptionsCoexist(t *testing.T) {
+	db, c, now := fixture(t)
+	for id, model := range map[string]string{
+		"legacy":  `{"instanceId":"claudeAgent","model":"claude-test","options":{" effort ":" high ","other":true,"nested":{"ignore":1}}}`,
+		"array":   `{"instanceId":"codex","model":"codex-test","options":[{"id":"reasoningEffort","value":"high"}]}`,
+		"missing": `{"instanceId":"codex","model":"codex-test"}`,
+	} {
+		thread(t, db, id, now)
+		exec(t, db, `UPDATE projection_threads SET model_selection_json=? WHERE thread_id=?`, model, id)
+	}
+	snap := c.Poll()
+	if len(snap.Sessions) != 3 || snap.Sources[0].State != "healthy" {
+		t.Fatalf("legacy source unavailable: %+v", snap.Sources)
+	}
+	for _, s := range snap.Sessions {
+		if s.Name != "Thread missing" && s.ThinkingLevel != "high" {
+			t.Fatalf("model options: %+v", s)
+		}
+	}
+}
