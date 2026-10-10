@@ -200,6 +200,23 @@ func (s *Server) fetch(ctx context.Context, t Target) MachineState {
 	state.Online = true
 	state.GeneratedAt = snap.GeneratedAt
 	state.Sessions = snap.Sessions
+	// Legacy agents omit Source. Their non-Pi IDs are namespaced, and
+	// sessionsDir identifies the Pi collector root even in mixed snapshots.
+	// Preserve explicit sources and leave unknown namespaces unclassified.
+	for i := range state.Sessions {
+		row := &state.Sessions[i]
+		if row.Source != "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(row.ID, "t3:"):
+			row.Source = "t3"
+		case strings.HasPrefix(row.ID, "claude-code:"):
+			row.Source = "claude-code"
+		case snap.SessionsDir != "" && row.ID != "" && !strings.Contains(row.ID, ":"):
+			row.Source = "pi"
+		}
+	}
 	state.Sources = snap.Sources
 	state.ActiveSessions = snap.ActiveSessions
 	// Agents deployed before activeSessions was added still report enough data

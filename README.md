@@ -32,6 +32,13 @@ send input, change focus, start a Herdr server, or read terminal transcripts.
 Unavailable or stale collectors do not count as live. Agents running only in
 tmux are not included in this monitor; session history and Pulse remain separate.
 
+Each session title includes its originating application: **Pi**, **T3 Code**,
+**Claude Code**, or **Hermes**. This label stays visible on mobile and is separate
+from the computer running it and the provider/model powering it. Collectors
+report application identity explicitly. For older agents, the server recognizes
+T3/Claude ID namespaces and unnamespaced Pi sessions from the reported Pi
+collector directory. Missing metadata or an unknown source shows **Unknown app**.
+
 The session table shows each machine, project, provider, model, thinking level,
 message count, cost, start time, and duration. Active sessions remain visible
 before they produce assistant text and flash when their state changes;

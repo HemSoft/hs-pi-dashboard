@@ -82,6 +82,7 @@ func applyClaudeEntry(state *fileState, line []byte) {
 		return // mixed-session artifacts must not contaminate an existing summary
 	}
 	s.ID = id
+	s.Source = "claude-code"
 	s.Provider = "claude-code"
 	if s.StartedAt.IsZero() || ts.Before(s.StartedAt) {
 		s.StartedAt = ts

@@ -41,8 +41,13 @@ func TestSessionsEndpointCombinesPiAndClaudeForFleet(t *testing.T) {
 			t.Fatalf("agent response = %+v", snap)
 		}
 		ids := map[string]bool{}
+		apps := map[string]string{}
 		for _, s := range snap.Sessions {
 			ids[s.ID] = true
+			apps[s.ID] = s.Source
+		}
+		if apps["same"] != "pi" || apps["claude-code:same"] != "claude-code" {
+			t.Fatalf("application identity missing from endpoint: %+v", apps)
 		}
 		if !ids["same"] || !ids["claude-code:same"] {
 			t.Fatalf("session ids collided: %+v", ids)
