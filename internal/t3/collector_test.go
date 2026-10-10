@@ -224,3 +224,17 @@ func TestEveryThreadAndLiveRowSurviveHistoryCapAndDedup(t *testing.T) {
 		t.Fatalf("all quiet threads: %d/%d", len(merged.Sessions), merged.ActiveSessions)
 	}
 }
+
+func TestReadOnlyPathWithURICharacters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "T3 data # & +", "state.sqlite")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db := createDB(t, path)
+	now := time.Now()
+	thread(t, db, "one", now)
+	snap := New(path, time.Minute).Poll()
+	if len(snap.Sessions) != 1 || snap.ActiveSessions != 1 || snap.Sources[0].State != "healthy" {
+		t.Fatalf("escaped native path: %+v", snap.Sources)
+	}
+}

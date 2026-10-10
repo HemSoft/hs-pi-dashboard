@@ -69,7 +69,9 @@ func (c *Collector) Poll() sessions.Snapshot {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(c.path), RawQuery: "mode=ro"}).String()
+	// Escape the complete native path, including Windows drive letters and
+	// backslashes. URL.Path would render drive paths as opaque file URIs.
+	dsn := "file:" + strings.ReplaceAll(url.QueryEscape(c.path), "+", "%20") + "?mode=ro"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return c.unavailable(now, "T3 database could not be opened read-only")
@@ -78,7 +80,7 @@ func (c *Collector) Poll() sessions.Snapshot {
 	db.SetMaxOpenConns(1)
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return c.unavailable(now, "T3 database is locked or unreadable")
+		return c.unavailable(now, fmt.Sprintf("T3 database is locked or unreadable: %v", err))
 	}
 	defer tx.Rollback()
 	// T3 versions before event sequence projection leave sequence NULL.
